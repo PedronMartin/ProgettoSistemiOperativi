@@ -9,6 +9,8 @@
 //librerie necessarie
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
+#include <errno.h>
 #include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
@@ -17,7 +19,7 @@
 
 //dichiaraioni delle funzioni
 void checkParameters(int, char*[]);
-void memoryCreation();
+bool memoryCreation();
 void waitPlayers();
 void memoryClosing();
 
@@ -30,7 +32,10 @@ int main(int argc, char *argv[]){
     checkParameters(argc, argv);
 
     //creazione memoria condivisa per comunicazione tra i processi
-    memoryCreation();
+    if(!memoryCreation()){
+        memoryClosing();
+        exit(0);
+    }
 
     //attesa dei giocatori
     waitPlayers();
@@ -55,38 +60,47 @@ int main(int argc, char *argv[]){
 
 void checkParameters(int argc, char *argv[]){
     if(argc != 4){
-        printf("\nFactor esecuzione errato.\nFormato richiesto: ./eseguibile <tempo_timeout_mossa> <simbolo_p1> <_simbolo_p2>\n\n");
+        printf("\nFactor esecuzione errato.\nFormato richiesto: ./eseguibile <tempo_timeout_mossa> <simbolo_p1> <_simbolo_p2>.\n\n");
         exit(0);
     }
     int timeout = atoi(argv[1]);                                      //converto il tempo di timeout in intero
     if(timeout < 0){                                                  //controllo che il tempo di timeout sia un intero positivo
-        printf("\nIl tempo di timeout della mossa deve essere un intero positivo (0 se non lo si vuole)\n");
+        printf("\nIl tempo di timeout della mossa deve essere un intero positivo (0 se non lo si vuole).\n");
         exit(0);
     }
     char p1 = *argv[2];                                                //assegno il simbolo del player 1
     char p2 = *argv[3];                                                //assegno il simbolo del player 2
-    if(p1 == p2){                                                     //controllo che i simboli dei due player siano diversi
-        printf("\nI simboli dei due giocatori devono essere diversi\n");
+    if(p1 == p2){                                                      //controllo che i simboli dei due player siano diversi
+        printf("\nI simboli dei due giocatori devono essere diversi.\n");
         exit(0);
     }
 }
 
-void memoryCreation(){
+bool memoryCreation(){
+    bool result = false;
     key_t key = ftok("TriServer.c", 111);                              //creo la chiave unica per IPC
     if(key == -1) {                                                    //gestione errore
         printf("\nErrore nella creazione della chiave.\n");
         exit(0);
     }
-    shmid = shmget(key, 1024, 0666 | IPC_CREAT | IPC_EXCL);        //creo la memoria condivisa (fallisce se già esistente)
-    if(shmid == -1){                                                   //gestione errore
+    shmid = shmget(key, 1024, 0666 | IPC_CREAT | IPC_EXCL);            //creo la memoria condivisa (fallisce se già esistente)
+    if(shmid == -1 && errno == EEXIST){                                 //gestione errore
         printf("\nErrore nella creazione della memoria condivisa.\n");
-        exit(0);
+        printf("Probabile causa: memoria condivisa già esistente.\n");
+        shmid = shmget(key, 1024, 0666);                               //accedo alla memoria condivisa già esistente
+        result = false;
     }
-    semid = semget(key, 1, 0666 | IPC_CREAT | IPC_EXCL);           //creo i semafori (fallisce se già esistente)       
-    if(semid == -1){                                                   //gestione errore
+    else
+        result = true;
+    semid = semget(key, 1, 0666 | IPC_CREAT | IPC_EXCL);               //creo i semafori (fallisce se già esistente)       
+    if(semid == -1 && errno == EEXIST){                                 //gestione errore
         printf("\nErrore nella creazione dei semafori.\n");
-        exit(0);
-    }                          
+        printf("Probabile causa: semafori già esistenti.\n");
+        semid = semget(key, 1, 0666);                                  //accedo ai semafori già esistenti
+        result = false;
+    }
+
+    return result;
 }
 
 void waitPlayers(){
@@ -103,8 +117,8 @@ void waitPlayers(){
 }
 
 void memoryClosing(){
-    if(shmctl(shmid, IPC_RMID, NULL) == -1);                           //chiudo la memoria condivisa (null è puntatore a struttura di controllo, non necessario)
-        printf("\nErrore nella chiusura della memoria condivisa.\n");  //gestione errore
-    if(semctl(semid, 0, IPC_RMID) == -1)                               //chiudo i semafori
-        printf("\nErrore nella chiusura dei semafori.\n");             //gestione errore
+    if(shmctl(shmid, IPC_RMID, NULL) == 0);                            //chiudo la memoria condivisa (null è puntatore a struttura di controllo, non necessario)
+        printf("\nMemoria condivisa chiusa.\n");
+    if(semctl(semid, 0, IPC_RMID) == 0)                                //chiudo i semafori
+        printf("Semafori chiusi.\n");
 }   
