@@ -17,6 +17,7 @@
 //dichiaraioni delle funzioni
 void checkParameters(int, char*[]);
 void enterSession();
+void waitPlayers();
 
 //dichiarazione variabili globali
 int shmid, semid;
@@ -32,6 +33,9 @@ int main(int argc, char *argv[]){
 
     //comunica al server che sono entrato
     enterSession();
+
+    //accedo alla memoria condivisa e attendo un avversario
+    waitPlayers();
 
    //controlla che mem. condivisa sia stata creata correttamente
 
@@ -76,4 +80,8 @@ void enterSession(){
     if(semop(semid, &sops, 1) == -1)                                    //eseguo l'operazione sul semaforo
         printf("\nErrore nell'attesa dei giocatori.\n");                //gestione errore
     printf("\nPlayer %s connesso.\n", playername);                      //comunico al player che è connesso
+}
+
+void waitPlayers(){
+    
 }

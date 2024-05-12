@@ -20,11 +20,25 @@
 //dichiaraioni delle funzioni
 void checkParameters(int, char*[]);
 bool memoryCreation();
+void boardCreation(char*[]);
 void waitPlayers();
 void memoryClosing();
 
-//dichiarazione variabili globali
+//dichiarazione variabili e costanti globali
 int shmid, semid;
+#define righe 3
+#define colonne 3
+
+//struttura di gioco
+struct Tris{
+    int board[righe][colonne];
+    int currentPlayer;
+    char simbolo_p1;
+    char simbolo_p2;
+    pid_t pid_p1;
+    pid_t pid_p2;
+    int winner;
+} *game;
 
 int main(int argc, char *argv[]){
 
@@ -34,8 +48,11 @@ int main(int argc, char *argv[]){
     //creazione memoria condivisa per comunicazione tra i processi
     if(!memoryCreation()){
         memoryClosing();
-        exit(0);
+        exit(-1);
     }
+
+    //creazione campo e variabili di gioco
+    boardCreation(argv);
 
     //attesa dei giocatori
     waitPlayers();
@@ -84,7 +101,7 @@ bool memoryCreation(){
         exit(0);
     }
     shmid = shmget(key, 1024, 0666 | IPC_CREAT | IPC_EXCL);            //creo la memoria condivisa (fallisce se già esistente)
-    if(shmid == -1 && errno == EEXIST){                                 //gestione errore
+    if(shmid == -1 && errno == EEXIST){                                //gestione errore
         printf("\nErrore nella creazione della memoria condivisa.\n");
         printf("Probabile causa: memoria condivisa già esistente.\n");
         shmid = shmget(key, 1024, 0666);                               //accedo alla memoria condivisa già esistente
@@ -93,7 +110,7 @@ bool memoryCreation(){
     else
         result = true;
     semid = semget(key, 1, 0666 | IPC_CREAT | IPC_EXCL);               //creo i semafori (fallisce se già esistente)       
-    if(semid == -1 && errno == EEXIST){                                 //gestione errore
+    if(semid == -1 && errno == EEXIST){                                //gestione errore
         printf("\nErrore nella creazione dei semafori.\n");
         printf("Probabile causa: semafori già esistenti.\n");
         semid = semget(key, 1, 0666);                                  //accedo ai semafori già esistenti
@@ -101,6 +118,27 @@ bool memoryCreation(){
     }
 
     return result;
+}
+
+void boardCreation(char *argv[]){
+    game = (struct Tris*)shmat(shmid, NULL, 0);                         //attacco la struct alla memoria condivisa (cast necessario)
+    if(game == (void*)-1){                                              //gestione errore (cast per compatibilità puntatore)
+        printf("\nErrore nell'attacco alla memoria condivisa.\n");
+        exit(0);
+    }
+    game->currentPlayer = 1;                                           //inizializzo il player corrente
+    game->winner = 0;                                                  //inizializzo il vincitore
+    game->simbolo_p1 = *argv[2];                                       //assegno il simbolo al player 1
+    game->simbolo_p2 = *argv[3];                                       //assegno il simbolo al player 2
+    game->pid_p1 = -1;                                                 //inizializzo il pid
+    game->pid_p2 = -1;                                                 //inizializzo il pid 
+    for(int i = 0; i < righe; i++)                                     //inizializzo la matrice di gioco
+        for(int j = 0; j < colonne; j++)
+            game->board[i][j] = 0;
+    if(shmdt(game) == -1){                                             //stacco la memoria condivisa dal processo
+        printf("\nErrore nello stacco della memoria condivisa.\n");
+        exit(0);
+    }
 }
 
 void waitPlayers(){
