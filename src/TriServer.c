@@ -16,6 +16,8 @@
 #include <sys/shm.h>
 #include <sys/sem.h>
 #include <unistd.h>
+#include <pthread.h>
+#include "TrisStruct.h"
 
 //dichiaraioni delle funzioni
 void checkParameters(int, char*[]);
@@ -24,21 +26,9 @@ void boardCreation(char*[]);
 void waitPlayers();
 void memoryClosing();
 
-//dichiarazione variabili e costanti globali
+//dichiarazione variabili globali
 int shmid, semid;
-#define righe 3
-#define colonne 3
-
-//struttura di gioco
-struct Tris{
-    int board[righe][colonne];
-    int currentPlayer;
-    char simbolo_p1;
-    char simbolo_p2;
-    pid_t pid_p1;
-    pid_t pid_p2;
-    int winner;
-} *game;
+struct Tris *game;
 
 int main(int argc, char *argv[]){
 
@@ -121,20 +111,23 @@ bool memoryCreation(){
 }
 
 void boardCreation(char *argv[]){
-    game = (struct Tris*)shmat(shmid, NULL, 0);                         //attacco la struct alla memoria condivisa (cast necessario)
-    if(game == (void*)-1){                                              //gestione errore (cast per compatibilità puntatore)
+    game = (struct Tris*)shmat(shmid, NULL, 0);                        //attacco la memoria condivisa al processo
+    if(game == (void*)-1){                                             //gestione errore (cast per compatibilità puntatore)
         printf("\nErrore nell'attacco alla memoria condivisa.\n");
         exit(0);
     }
+    pthread_mutex_init(&game->mutex, NULL);                            //inizializzo il mutex
+    pthread_mutex_lock(&game->mutex);                                   //entro in SC
     game->currentPlayer = 1;                                           //inizializzo il player corrente
     game->winner = 0;                                                  //inizializzo il vincitore
-    game->simbolo_p1 = *argv[2];                                       //assegno il simbolo al player 1
-    game->simbolo_p2 = *argv[3];                                       //assegno il simbolo al player 2
-    game->pid_p1 = -1;                                                 //inizializzo il pid
-    game->pid_p2 = -1;                                                 //inizializzo il pid 
-    for(int i = 0; i < righe; i++)                                     //inizializzo la matrice di gioco
+    game->simbolo_p[0] = *argv[2];                                     //assegno il simbolo al player 1
+    game->simbolo_p[1] = *argv[3];                                     //assegno il simbolo al player 2
+    game->pid_p[0] = -1;                                               //inizializzo il pid
+    game->pid_p[0] = -1;                                               //inizializzo il pid 
+    for(int i = 0; i < righe; i++)                                     //inizializzo la matrice di gioco (valori a 0)
         for(int j = 0; j < colonne; j++)
             game->board[i][j] = 0;
+    pthread_mutex_unlock(&game->mutex);                                 //esco da SC
     if(shmdt(game) == -1){                                             //stacco la memoria condivisa dal processo
         printf("\nErrore nello stacco della memoria condivisa.\n");
         exit(0);
@@ -155,8 +148,15 @@ void waitPlayers(){
 }
 
 void memoryClosing(){
+    game = (struct Tris*)shmat(shmid, NULL, 0);                        //attacco la struct alla memoria condivisa (cast necessario) 
+    if(pthread_mutex_destroy(&game->mutex) == 0)                       //chiudo il mutex
+        printf("\nMutex chiuso.\n");
     if(shmctl(shmid, IPC_RMID, NULL) == 0);                            //chiudo la memoria condivisa (null è puntatore a struttura di controllo, non necessario)
         printf("\nMemoria condivisa chiusa.\n");
     if(semctl(semid, 0, IPC_RMID) == 0)                                //chiudo i semafori
         printf("Semafori chiusi.\n");
+    free(game);                                                        //libero la memoria allocata
 }   
+
+//CONTROLLARE COCN IPCS SU SHELL LA DIMENSIONE DELLA MEMORIA CONDIVISA E QUANTI PROCESSI SONO ATTUALMENTE ATTACCATI
+//nel conteggio dei byte non dimenticare \0

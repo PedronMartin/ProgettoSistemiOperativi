@@ -13,6 +13,9 @@
 #include <sys/shm.h>
 #include <sys/sem.h>
 #include <unistd.h>
+#include <pthread.h>
+#include <signal.h>
+#include "TrisStruct.h"
 
 //dichiaraioni delle funzioni
 void checkParameters(int, char*[]);
@@ -22,6 +25,7 @@ void waitPlayers();
 //dichiarazione variabili globali
 int shmid, semid;
 char *playername;
+struct Tris *game;
 
 int main(int argc, char *argv[]){
 
@@ -83,5 +87,20 @@ void enterSession(){
 }
 
 void waitPlayers(){
-    
+    game = (struct Tris*)shmat(shmid, NULL, 0);                         //attacco memoria condivisa a processo
+    if(game == (void*)-1){
+        printf("\nErrore nell'accesso alla memoria condivisa.\n");
+        exit(0);
+    }
+    pthread_mutex_lock(&game->mutex);                                   //provo ad entrare in SC
+    if(game->pid_p[0] == -1){                                           //se il primo giocatore non è ancora entrato
+        game->pid_p[0] = getpid();                                      //significa che sono io il primo giocatore
+        pthread_mutex_unlock(&game->mutex);                             //esco dalla SC
+        printf("\nIn attesa del secondo giocatore...\n");               //comunico al player che è in attesa
+        while(game->pid_p[1] == -1);                                    //attendo il secondo giocatore
+    }
+    else{                                                               //se il primo giocatore è già entrato
+        game->pid_p[1] = getpid();                                      //significa che sono il secondo giocatore
+        pthread_mutex_unlock(&game->mutex);                             //esco dalla SC
+    }
 }
