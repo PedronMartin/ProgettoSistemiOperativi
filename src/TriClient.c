@@ -21,10 +21,12 @@
 void checkParameters(int, char*[]);
 void enterSession();
 void waitPlayers();
+void play();
 
 //dichiarazione variabili globali
 int shmid, semid;
 char *playername;
+int player;
 struct Tris *game;
 
 int main(int argc, char *argv[]){
@@ -41,9 +43,8 @@ int main(int argc, char *argv[]){
     //accedo alla memoria condivisa e attendo un avversario
     waitPlayers();
 
-   //controlla che mem. condivisa sia stata creata correttamente
-
-   //stampa attesa secondo giocatore (segnale ricevuto da server forse?)
+    //funzione di gioco
+    play();
 
    //a ogni turno stampa matrice (mem. condivisa)
 
@@ -95,12 +96,41 @@ void waitPlayers(){
     pthread_mutex_lock(&game->mutex);                                   //provo ad entrare in SC
     if(game->pid_p[0] == -1){                                           //se il primo giocatore non è ancora entrato
         game->pid_p[0] = getpid();                                      //significa che sono io il primo giocatore
+        player = 0;                                                     //imposto il player locale
         pthread_mutex_unlock(&game->mutex);                             //esco dalla SC
         printf("\nIn attesa del secondo giocatore...\n");               //comunico al player che è in attesa
         while(game->pid_p[1] == -1);                                    //attendo il secondo giocatore
     }
     else{                                                               //se il primo giocatore è già entrato
         game->pid_p[1] = getpid();                                      //significa che sono il secondo giocatore
+        player = 1;                                                     //imposto il player locale
         pthread_mutex_unlock(&game->mutex);                             //esco dalla SC
     }
+    printf("\nIl gioco può iniziare. Tu sei il player con simbolo %c\n", game->simbolo[player]);
+}
+
+void play(){
+    int row, column;
+    while(1){                                                           //funzione di gioco         
+        pause();                                                        //attendo il segnale SIGUSR1
+        printf("\nInserisci riga e colonna dove inserire il simbolo: ");
+        scanf("%d %d", &row, &column);                                  //inserimento riga e colonna
+        if(row < 0 || row > righe - 1 || column < 0 || column > colonne - 1){             
+            printf("\nValori inseriti non validi.\n");
+            continue;                                                   //se i valori non sono validi ripeto il ciclo
+        }
+        pthread_mutex_lock(&game->mutex);                               //entro in SC
+        if(game->board[row][column] != -1){                             //se la casella è già occupata
+            printf("\nCasella già occupata.\n");
+            pthread_mutex_unlock(&game->mutex);                         //esco da SC
+            continue;                                                   //ripeto il ciclo
+        }
+        game->board[row][column] = player;                              //inserisco il simbolo nella matrice
+        //aggiungere stampa sia qui che all'inizio del turno
+        pthread_mutex_unlock(&game->mutex);                             //esco da SC
+        kill(game->pid_p[server], SIGUSR1);                            //invio il segnale al server
+
+        //utilizzare alarm e SIGALRM per gestire il timer di gioco
+
+    }                       
 }

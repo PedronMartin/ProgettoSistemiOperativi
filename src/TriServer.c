@@ -22,6 +22,7 @@
 //dichiaraioni delle funzioni
 void checkParameters(int, char*[]);
 bool memoryCreation();
+void playerturn(int);
 void boardCreation(char*[]);
 void waitPlayers();
 void memoryClosing();
@@ -39,6 +40,18 @@ int main(int argc, char *argv[]){
     if(!memoryCreation()){
         memoryClosing();
         exit(-1);
+    }
+
+    //gestione dei segnali
+    if(signal(SIGUSR1, playerturn) == SIG_ERR){                        //gestione segnale per cambio turno (da p1 a p2)
+        printf("\nErrore nella gestione del segnale.\n");
+        memoryClosing();
+        exit(0);
+    }
+    if(signal(SIGUSR2, playerturn) == SIG_ERR){                        //gestione segnale per cambio turno (da p2 a p1)
+        printf("\nErrore nella gestione del segnale.\n");
+        memoryClosing();
+        exit(0);
     }
 
     //creazione campo e variabili di gioco
@@ -83,6 +96,16 @@ void checkParameters(int argc, char *argv[]){
     }
 }
 
+void playerturn(int sig){
+    pthread_mutex_lock(&game->mutex);                                  //entro in SC
+    if(sig == SIGUSR1)                                                 //se il segnale è per il player 1
+        game->currentPlayer = 1;                                       //cambio il player corrente
+    else if(sig == SIGUSR2)                                            //se il segnale è per il player 2
+        game->currentPlayer = 0;                                       //cambio il player corrente
+    //mettere la kill per notificare turno a processo + aggiungere funzione check tavola
+    pthread_mutex_unlock(&game->mutex);                                //esco da SC
+}
+
 bool memoryCreation(){
     bool result = false;
     key_t key = ftok("TriServer.c", 111);                              //creo la chiave unica per IPC
@@ -117,17 +140,19 @@ void boardCreation(char *argv[]){
         exit(0);
     }
     pthread_mutex_init(&game->mutex, NULL);                            //inizializzo il mutex
-    pthread_mutex_lock(&game->mutex);                                   //entro in SC
-    game->currentPlayer = 1;                                           //inizializzo il player corrente
+    pthread_mutex_lock(&game->mutex);                                  //entro in SC
+    game->currentPlayer = 0;                                           //inizializzo il player corrente
     game->winner = 0;                                                  //inizializzo il vincitore
-    game->simbolo_p[0] = *argv[2];                                     //assegno il simbolo al player 1
-    game->simbolo_p[1] = *argv[3];                                     //assegno il simbolo al player 2
-    game->pid_p[0] = -1;                                               //inizializzo il pid
-    game->pid_p[0] = -1;                                               //inizializzo il pid 
-    for(int i = 0; i < righe; i++)                                     //inizializzo la matrice di gioco (valori a 0)
+    game->timeout = atoi(argv[1]);                                     //assegno il timeout
+    game->simbolo[0] = *argv[2];                                       //assegno il simbolo al player 1
+    game->simbolo[1] = *argv[3];                                       //assegno il simbolo al player 2
+    game->pid_p[0] = -1;                                               //inizializzo il pid player 1
+    game->pid_p[1] = -1;                                               //inizializzo il pid player 2
+    game->pid_s = getpid();                                            //assegno il pid del server
+    for(int i = 0; i < righe; i++)                                     //inizializzo la matrice di gioco (valori a -1)
         for(int j = 0; j < colonne; j++)
-            game->board[i][j] = 0;
-    pthread_mutex_unlock(&game->mutex);                                 //esco da SC
+            game->board[i][j] = -1;
+    pthread_mutex_unlock(&game->mutex);                                //esco da SC
     if(shmdt(game) == -1){                                             //stacco la memoria condivisa dal processo
         printf("\nErrore nello stacco della memoria condivisa.\n");
         exit(0);
