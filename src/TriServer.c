@@ -17,6 +17,8 @@
 #include <sys/sem.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <signal.h>
+#include <sys/mman.h>
 #include "TrisStruct.h"
 
 //dichiaraioni delle funzioni
@@ -25,16 +27,25 @@ bool memoryCreation();
 void playerturn(int);
 void boardCreation(char*[]);
 void waitPlayers();
+bool checkVictory();
+bool checkYield();
+void sigIntManage(int);
 void memoryClosing();
 
 //dichiarazione variabili globali
-int shmid, semid;
+int shmid = -1, semid = -1;
 struct Tris *game;
 
 int main(int argc, char *argv[]){
 
     //controllo il numero dei valori inseriti da terminale
     checkParameters(argc, argv);
+
+    //gestione del segnale Ctrl ^C
+    if(signal(SIGINT, sigIntManage) == SIG_ERR){                       //gestione segnale per chiusura del server
+        printf("\nErrore nella gestione del segnale.\n");
+        exit(-1);
+    }
 
     //creazione memoria condivisa per comunicazione tra i processi
     if(!memoryCreation()){
@@ -46,7 +57,7 @@ int main(int argc, char *argv[]){
     if(signal(SIGUSR1, playerturn) == SIG_ERR){                        //gestione segnale per cambio turno (da p1 a p2)
         printf("\nErrore nella gestione del segnale.\n");
         memoryClosing();
-        exit(0);
+        exit(-1);
     }
     if(signal(SIGUSR2, playerturn) == SIG_ERR){                        //gestione segnale per cambio turno (da p2 a p1)
         printf("\nErrore nella gestione del segnale.\n");
@@ -59,14 +70,6 @@ int main(int argc, char *argv[]){
 
     //attesa dei giocatori
     waitPlayers();
-
-    //comunico ai due processi il loro simbolo di gioco
-
-    //controllo per memoria condivisa o altri elementi già presenti (e quindi chiusi malamente in un esecuzione precedente)
-
-    //istanzia memoria condivisa gioco (matrice di gioco deve essere qui)
-
-    //gestione del segnale Ctrl ^C
 
     //gestione del segnale che avvisa (corretto e coerente) i processi che l'esecuzione termina per causa esterna (Ctrl ^C) per terminale chiuso
 
@@ -94,16 +97,6 @@ void checkParameters(int argc, char *argv[]){
         printf("\nI simboli dei due giocatori devono essere diversi.\n");
         exit(0);
     }
-}
-
-void playerturn(int sig){
-    pthread_mutex_lock(&game->mutex);                                  //entro in SC
-    if(sig == SIGUSR1)                                                 //se il segnale è per il player 1
-        game->currentPlayer = 1;                                       //cambio il player corrente
-    else if(sig == SIGUSR2)                                            //se il segnale è per il player 2
-        game->currentPlayer = 0;                                       //cambio il player corrente
-    //mettere la kill per notificare turno a processo + aggiungere funzione check tavola
-    pthread_mutex_unlock(&game->mutex);                                //esco da SC
 }
 
 bool memoryCreation(){
@@ -137,12 +130,13 @@ void boardCreation(char *argv[]){
     game = (struct Tris*)shmat(shmid, NULL, 0);                        //attacco la memoria condivisa al processo
     if(game == (void*)-1){                                             //gestione errore (cast per compatibilità puntatore)
         printf("\nErrore nell'attacco alla memoria condivisa.\n");
-        exit(0);
+        memoryClosing();
+        exit(-1);
     }
     pthread_mutex_init(&game->mutex, NULL);                            //inizializzo il mutex
     pthread_mutex_lock(&game->mutex);                                  //entro in SC
     game->currentPlayer = 0;                                           //inizializzo il player corrente
-    game->winner = 0;                                                  //inizializzo il vincitore
+    game->winner = -1;                                                  //inizializzo il vincitore
     game->timeout = atoi(argv[1]);                                     //assegno il timeout
     game->simbolo[0] = *argv[2];                                       //assegno il simbolo al player 1
     game->simbolo[1] = *argv[3];                                       //assegno il simbolo al player 2
@@ -152,11 +146,12 @@ void boardCreation(char *argv[]){
     for(int i = 0; i < righe; i++)                                     //inizializzo la matrice di gioco (valori a -1)
         for(int j = 0; j < colonne; j++)
             game->board[i][j] = -1;
-    pthread_mutex_unlock(&game->mutex);                                //esco da SC
-    if(shmdt(game) == -1){                                             //stacco la memoria condivisa dal processo
-        printf("\nErrore nello stacco della memoria condivisa.\n");
-        exit(0);
+    if(msync(game, sizeof(struct Tris), MS_SYNC) == -1){               //sincronizzo la memoria condivisa
+        printf("\nErrore nella sincronizzazione della memoria condivisa.\n");
+        memoryClosing();
+        exit(-1);
     }
+    pthread_mutex_unlock(&game->mutex);                                //esco da SC
 }
 
 void waitPlayers(){
@@ -172,15 +167,82 @@ void waitPlayers(){
     printf("\nPlayer 2 connesso.\n");
 }
 
+void playerturn(int sig){
+    pthread_mutex_lock(&game->mutex);                                  //entro in SC
+    if(checkYield()) {
+        memoryClosing;
+        exit(0);
+    }                                                      //controllo se qualcuno ha abbandonato
+    if(sig == SIGUSR1){                                                //se il segnale è dal player 1
+        if(checkVictory())                                             //controllo se c'è un vincitore (se c'è esco)
+            return;
+         game->currentPlayer = 1;                                      //cambio il player corrente
+         if(kill(game->pid_p[1], SIGUSR2) == -1)                       //mando il segnale al player 2
+            printf("\nErrore nell'invio del segnale al player 2.\n");
+    }
+    else if(sig == SIGUSR2){                                           //se il segnale è per il player 2
+        if(checkVictory())                                             //controllo se c'è un vincitore (se c'è esco)
+            return;
+        game->currentPlayer = 0;                                       //cambio il player corrente
+        if(kill(game->pid_p[0], SIGUSR1) == -1)                        //mando il segnale al player 1
+            printf("\nErrore nell'invio del segnale al player 1.\n");
+    }
+    pthread_mutex_unlock(&game->mutex);                                //esco da SC
+}
+
+bool checkVictory(){
+    printBoard(game);                                                  //stampa la matrice di gioco
+    for(int i = 0; i < righe; i++)                                     //controllo righe
+        if(game->board[i][0] == game->board[i][1] && game->board[i][1] == game->board[i][2] && game->board[i][0] != -1)
+            game->winner = game->board[i][0];
+    for(int i = 0; i < colonne; i++)                                   //controllo colonne
+        if(game->board[0][i] == game->board[1][i] && game->board[1][i] == game->board[2][i] && game->board[0][i] != -1)
+            game->winner = game->board[0][i];
+                                                                       //controllo diagonali
+    if(game->board[0][0] == game->board[1][1] && game->board[1][1] == game->board[2][2] && game->board[0][0] != -1)
+        game->winner = game->board[0][0];
+    if(game->board[0][2] == game->board[1][1] && game->board[1][1] == game->board[2][0] && game->board[0][2] != -1)
+        game->winner = game->board[0][2];
+
+    if(game->winner != -1){                                           //se c'è un vincitore
+        printf("\nIl vincitore è il player con il simbolo %c.\n", game->simbolo[game->winner]);
+        return true;
+    }
+}
+
+bool checkYield(){
+    if(game->pid_p[0] == -1){                                          //se il player 1 ha abbandonato
+        printf("\nIl player 1 ha abbandonato.\n");
+        game->winner = 1;                                              //il player 2 vince
+        return true;
+    }
+    if(game->pid_p[1] == -1){                                          //se il player 2 ha abbandonato
+        printf("\nIl player 2 ha abbandonato.\n");
+        game->winner = 0;                                              //il player 1 vince
+        return true;
+    }
+    return false;
+}
+
+void sigIntManage(int sig){
+    printf("\nChiusura del server in corso per causa esterna\n");
+    memoryClosing();
+    exit(0);
+}
+
 void memoryClosing(){
-    game = (struct Tris*)shmat(shmid, NULL, 0);                        //attacco la struct alla memoria condivisa (cast necessario) 
-    if(pthread_mutex_destroy(&game->mutex) == 0)                       //chiudo il mutex
-        printf("\nMutex chiuso.\n");
-    if(shmctl(shmid, IPC_RMID, NULL) == 0);                            //chiudo la memoria condivisa (null è puntatore a struttura di controllo, non necessario)
-        printf("\nMemoria condivisa chiusa.\n");
+    if(shmid != -1) {
+        game = (struct Tris*)shmat(shmid, NULL, 0);                        //attacco la struct alla memoria condivisa (cast necessario) 
+        game->pid_p[0] = -1;                                               //comunico al server che il player 1 ha abbandonato
+        game->pid_p[1] = -1;                                               //comunico al server che il player 2 ha abbandonato
+        if(pthread_mutex_destroy(&game->mutex) == 0)                       //chiudo il mutex
+            printf("\nMutex chiuso.");
+        shmdt(game);                                                       //stacco la struct dalla memoria condivisa
+        if(shmctl(shmid, IPC_RMID, NULL) == 0);                            //chiudo la memoria condivisa (null è puntatore a struttura di controllo, non necessario)
+            printf("\nMemoria condivisa chiusa.\n");
+    }
     if(semctl(semid, 0, IPC_RMID) == 0)                                //chiudo i semafori
         printf("Semafori chiusi.\n");
-    free(game);                                                        //libero la memoria allocata
 }   
 
 //CONTROLLARE COCN IPCS SU SHELL LA DIMENSIONE DELLA MEMORIA CONDIVISA E QUANTI PROCESSI SONO ATTUALMENTE ATTACCATI
