@@ -23,7 +23,8 @@ void enterSession();
 void waitPlayers();
 void play();
 void signalToServer();
-void sigIntManage(int);;
+void sigIntManage(int);
+void sigFromServer(int);
 void victory();
 void closeGame();
 
@@ -32,6 +33,7 @@ int shmid, semid;
 char *playername;
 int player;
 int enemy;
+int row, column;
 struct Tris *game;
 
 int main(int argc, char *argv[]){
@@ -45,6 +47,12 @@ int main(int argc, char *argv[]){
     //gestione del segnale SIGINT
     if(signal(SIGINT, sigIntManage) == SIG_ERR){
         printf("\nErrore nella gestione del segnale SIGINT.\n");
+        exit(0);
+    }
+
+    //gestione del segnale SIGUSR1 e SIGUSR2
+    if(signal(SIGUSR1, sigFromServer) == SIG_ERR || signal(SIGUSR2, sigFromServer) == SIG_ERR){
+        printf("\nErrore nella gestione del segnale SIGUSR1.\n");
         exit(0);
     }
 
@@ -84,7 +92,7 @@ void enterSession(){
         printf("\nErrore nella generazione della chiave.\n");
         exit(0);
     }
-    semid = semget(key, 1, 0666);
+    semid = semget(key, 2, 0666);
     if(semid == -1){
         printf("\nErrore nell'accesso ai semafori.\n");
         exit(0);
@@ -109,55 +117,66 @@ void waitPlayers(){
         closeGame();
     }
     pthread_mutex_lock(&game->mutex);                                   //provo ad entrare in SC
-    if(game->pid_p[0] == -1){                                           //se il primo giocatore non è ancora entrato
-        game->pid_p[0] = getpid();                                      //significa che sono io il primo giocatore
+    if(game->pid_p1 == -1){                                             //se il primo giocatore non è ancora entrato
+        game->pid_p1 = getpid();                                        //significa che sono io il primo giocatore
         player = 0;                                                     //imposto il player locale
         enemy = 1;                                                      //imposto il player avversario
         pthread_mutex_unlock(&game->mutex);                             //esco dalla SC
         printf("\nIn attesa del secondo giocatore...\n");               //comunico al player che è in attesa
-        printf("\nPID1: %d\nPID2: %d\n", game->pid_p[0], game->pid_p[1]);//comunico i pid dei giocatori
-        while(game->pid_p[1] == -1);                                    //attendo il secondo giocatore
+        while(game->pid_p2 == -1);                                      //attendo il secondo giocatore
     }
     else{                                                               //se il primo giocatore è già entrato
-        game->pid_p[1] = getpid();                                      //significa che sono il secondo giocatore
+        game->pid_p2 = getpid();                                        //significa che sono il secondo giocatore
         player = 1;                                                     //imposto il player locale
         enemy = 0;                                                      //imposto il player avversario
-        printf("\nPID1: %d\nPID2: %d\n", game->pid_p[0], game->pid_p[1]);
         pthread_mutex_unlock(&game->mutex);                             //esco dalla SC
     }
     printf("\nIl gioco può iniziare. Tu sei il player con simbolo %c\n", game->simbolo[player]);
-    printf("\nPID1: %d\nPID2: %d\n", game->pid_p[0], game->pid_p[1]);
+    shmdt(game);                                                        //dettaccamento memoria condivisa
 }
 
 void play(){
-    int row, column;
-    while(game->winner == -1){                                          //funzione di gioco  
-        if(game->currentPlayer == player){                              //se è il mio turno
-            printf("\nOra è il tuo turno\n");                           //comunico il turno del player
-            printBoard(game);                                           //stampa la matrice di gioco
-            printf("\nInserisci riga e colonna dove inserire il simbolo: ");
-            scanf("%d %d", &row, &column);                              //inserimento riga e colonna
-            if(row < 0 || row > righe - 1 || column < 0 || column > colonne - 1){             
-                printf("\nValori inseriti non validi.\n");
-                continue;                                               //se i valori non sono validi ripeto il ciclo
-            }
-            pthread_mutex_lock(&game->mutex);                           //entro in SC
-            if(game->board[row][column] != -1){                         //se la casella è già occupata
-                printf("\nCasella già occupata.\n");
-                pthread_mutex_unlock(&game->mutex);                     //esco da SC
-                continue;                                               //ripeto il ciclo
-            }
-            game->board[row][column] = player;                          //inserisco il simbolo nella matrice
-            printBoard(game);                                           //stampa la matrice di gioco post mossa
-            pthread_mutex_unlock(&game->mutex);                         //esco da SC
-            signalToServer();                                           //comunico al server che ho giocato
-        }
-        printf("\n\nTurno del player avversario\n");                    //comunico il turno del player
-        pause();                                                        //attendo il segnale del server
+    struct sembuf sops = {1, 1, 0};                                     //inizializzo la struttura per l'operazione (+1)
+    if(semop(semid, &sops, 1) == -1){                                   //eseguo l'operazione sul semaforo
+        printf("\nErrore nell'avvisare il server che siamo pronti.\n");                //gestione errore
+        closeGame();
     }
+    game = (struct Tris*)shmat(shmid, NULL, 0);                         //attacco memoria condivisa a processo
+    if(player)
+        printf("\nTurno del player avversario\n");                      //comunico il turno del player
+    else
+        printf("\nOra è il tuo turno\n\n");                             //comunico il turno del player
+    while(game->winner == -1);                                          //funzione di gioco
     victory();                                                          //comunico il vincitore
     return;
-        //utilizzare alarm e SIGALRM per gestire il timer di gioco  
+    //utilizzare alarm e SIGALRM per gestire il timer di gioco  
+}
+
+void sigFromServer(int sig){
+    if(game->currentPlayer == player){                              //se è il mio turno
+        printBoard(game);                                           //stampa la matrice di gioco
+        int flag = 1;
+        do{
+            flag = 1;
+            printf("\nInserisci riga e colonna dove inserire il simbolo: ");
+            scanf("%d %d", &row, &column);                         //inserimento riga e colonna
+            if(row < 0 || row > righe - 1 || column < 0 || column > colonne - 1){             
+                printf("\nValori inseriti non validi.\n");
+                flag = 0;                                          //se i valori non sono validi ripeto il ciclo
+            }
+            else if(game->board[row][column] != -1){               //se la casella è già occupata
+                printf("\nCasella già occupata.\n");
+                flag = 0;                                          //ripeto il ciclo
+            }
+        }while(!flag);
+        pthread_mutex_lock(&game->mutex);                           //entro in SC
+        game->board[row][column] = player;                          //inserisco il simbolo nella matrice
+        pthread_mutex_unlock(&game->mutex);                         //esco da SC
+        printBoard(game);                                           //stampa la matrice di gioco post mossa
+        signalToServer();                                           //comunico al server che ho giocato
+    }
+    printf("\n\nTurno del player avversario\n");                    //comunico il turno del player
+    return;
 }
 
 void signalToServer(){
@@ -169,29 +188,34 @@ void signalToServer(){
 
 void sigIntManage(int sig){         //MANCA DOPPIA PREMITURA
     printf("\nChiusura del server in corso per causa esterna\n");
-    game->pid_p[player] = -1;                                           //comunico al server che il player ha abbandonato
     pid_t server = game->pid_s;
     shmdt(game);
     if(kill(server, SIGUSR1) == -1)                                     //avviso il server di controllare la partita
-        printf("\nErrore nella comunicazione con il server.\n");        //non importa il tipo di segnale (SIGUSR1 o SIGUSR2)*/
-    exit(0);
+        printf("\nErrore nella comunicazione con il server.\n");        //non importa il tipo di segnale (SIGUSR1 o SIGUSR2)
+   exit(0);
 }
 
 void victory(){
     if(game->winner == player){
-        if(game->pid_p[enemy] == -1)
-            printf("\nIl player avversario ha abbandonato la partita. Hai vinto!\n");
-        printf("\nHai vinto la partita!\n");
+        if(player){
+            if(game->pid_p1 == -1)
+                printf("\nIl player avversario ha abbandonato la partita. Hai vinto!\n");
+            else
+                printf("\nHai vinto la partita!\n");
+        }
+        else{
+            if(game->pid_p2 == -1)
+                printf("\nIl player avversario ha abbandonato la partita. Hai vinto!\n");
+            else
+                printf("\nHai vinto la partita!\n");
+        }
     }
     else
         printf("\nHai perso!\n");
-    printf("\nPID1: %d\nPID2: %d\n", game->pid_p[0], game->pid_p[1]);
-    printf("\nPID winner: %d\n", game->winner);
     return;
 }
 
 void closeGame(){
-    game->pid_p[player] = -1;
     shmdt(game);
     exit(0);
 }

@@ -30,6 +30,7 @@ void waitPlayers();
 bool checkVictory();
 bool checkYield();
 void sigIntManage(int);
+void Tris();
 void memoryClosing();
 
 //dichiarazione variabili globali
@@ -70,6 +71,9 @@ int main(int argc, char *argv[]){
 
     //attesa dei giocatori
     waitPlayers();
+
+    //funzione di gioco principale
+    Tris();
 
     //gestione del segnale che avvisa (corretto e coerente) i processi che l'esecuzione termina per causa esterna (Ctrl ^C) per terminale chiuso
 
@@ -115,14 +119,13 @@ bool memoryCreation(){
     }
     else
         result = true;
-    semid = semget(key, 1, 0666 | IPC_CREAT | IPC_EXCL);               //creo i semafori (fallisce se già esistente)       
+    semid = semget(key, 2, 0666 | IPC_CREAT | IPC_EXCL);               //creo i semafori (fallisce se già esistente)       
     if(semid == -1 && errno == EEXIST){                                //gestione errore
         printf("\nErrore nella creazione dei semafori.\n");
         printf("Probabile causa: semafori già esistenti.\n");
-        semid = semget(key, 1, 0666);                                  //accedo ai semafori già esistenti
+        semid = semget(key, 2, 0666);                                  //accedo ai semafori già esistenti
         result = false;
     }
-
     return result;
 }
 
@@ -140,24 +143,20 @@ void boardCreation(char *argv[]){
     game->timeout = atoi(argv[1]);                                     //assegno il timeout
     game->simbolo[0] = *argv[2];                                       //assegno il simbolo al player 1
     game->simbolo[1] = *argv[3];                                       //assegno il simbolo al player 2
-    game->pid_p[0] = -1;                                               //inizializzo il pid player 1
-    game->pid_p[1] = -1;                                               //inizializzo il pid player 2
+    game->pid_p1 = -1;                                               //inizializzo il pid player 1
+    game->pid_p2 = -1;                                               //inizializzo il pid player 2
     game->pid_s = getpid();                                            //assegno il pid del server
     for(int i = 0; i < righe; i++)                                     //inizializzo la matrice di gioco (valori a -1)
         for(int j = 0; j < colonne; j++)
             game->board[i][j] = -1;
-    if(msync(game, sizeof(struct Tris), MS_SYNC) == -1){               //sincronizzo la memoria condivisa
-        printf("\nErrore nella sincronizzazione della memoria condivisa.\n");
-        memoryClosing();
-        exit(-1);
-    }
     pthread_mutex_unlock(&game->mutex);                                //esco da SC
+    shmdt(game);                                                       //stacco la memoria condivisa
 }
 
 void waitPlayers(){
     printf("\nAttesa dei giocatori...\n");
     if(semctl(semid, 0, SETVAL, 0) == -1)                              //inizializzo il semaforo a 0 (come i player attuali)
-        printf("\nErrore nell'inizializzazione del semaforo.\n");      //gestione errore
+        printf("\nErrore nell'inizializzazione del semaforo 1.\n");    //gestione errore
     struct sembuf sops = {0, -1, 0};                                   //inizializzo la struttura per la wait
     if(semop(semid, &sops, 1) == -1)                                   //eseguo la wait
         printf("\nErrore nell'attesa dei giocatori.\n");               //gestione errore
@@ -167,27 +166,44 @@ void waitPlayers(){
     printf("\nPlayer 2 connesso.\n");
 }
 
+void Tris(){
+    if(semctl(semid, 1, SETVAL, 0) == -1)                              //inizializzo il semaforo a 0 (come i player attuali)
+        printf("\nErrore nell'inizializzazione del semaforo 2.\n");    //gestione errore
+    struct sembuf sops = {1, -1, 0};                                   //inizializzo la struttura per la wait
+    if(semop(semid, &sops, 1) == -1)                                   //eseguo la wait
+        printf("\nErrore nell'attesa che giocatore 1 sia pronto.\n");
+    if(semop(semid, &sops, 1) == -1)                                   //eseguo la wait
+        printf("\nErrore nell'attesa che giocatore 2 sia pronto.\n");
+    shmat(shmid, NULL, 0);                                             //attacco la memoria condivisa al processo
+    printf("\nTurno di Player 1.\n");
+    if(kill(game->pid_p1, SIGUSR1) == -1)                              //mando il segnale al player 1 di partire
+        printf("\nErrore nell'invio del segnale al player 1.\n");
+    while(game->winner == -1);                                         //funzione di gioco
+    shmdt(game);                                                       //stacco la memoria condivisa
+}
+
 void playerturn(int sig){
     pthread_mutex_lock(&game->mutex);                                  //entro in SC
-    if(checkYield()) {
-        memoryClosing;
-        exit(0);
-    }                                                      //controllo se qualcuno ha abbandonato
+    if(checkYield())
+        return;                                                        //controllo se qualcuno ha abbandonato
     if(sig == SIGUSR1){                                                //se il segnale è dal player 1
         if(checkVictory())                                             //controllo se c'è un vincitore (se c'è esco)
             return;
-         game->currentPlayer = 1;                                      //cambio il player corrente
-         if(kill(game->pid_p[1], SIGUSR2) == -1)                       //mando il segnale al player 2
+        game->currentPlayer = 1;                                      //cambio il player corrente
+         if(kill(game->pid_p2, SIGUSR2) == -1)                         //mando il segnale al player 2
             printf("\nErrore nell'invio del segnale al player 2.\n");
+        printf("\nTurno di Player 2.\n");
     }
     else if(sig == SIGUSR2){                                           //se il segnale è per il player 2
         if(checkVictory())                                             //controllo se c'è un vincitore (se c'è esco)
             return;
         game->currentPlayer = 0;                                       //cambio il player corrente
-        if(kill(game->pid_p[0], SIGUSR1) == -1)                        //mando il segnale al player 1
+        if(kill(game->pid_p1, SIGUSR1) == -1)                          //mando il segnale al player 1
             printf("\nErrore nell'invio del segnale al player 1.\n");
+        printf("\nTurno di Player 1.\n");
     }
     pthread_mutex_unlock(&game->mutex);                                //esco da SC
+    return;
 }
 
 bool checkVictory(){
@@ -208,15 +224,16 @@ bool checkVictory(){
         printf("\nIl vincitore è il player con il simbolo %c.\n", game->simbolo[game->winner]);
         return true;
     }
+    return false;
 }
 
 bool checkYield(){
-    if(game->pid_p[0] == -1){                                          //se il player 1 ha abbandonato
+    if(game->pid_p1 == -1){                                          //se il player 1 ha abbandonato
         printf("\nIl player 1 ha abbandonato.\n");
         game->winner = 1;                                              //il player 2 vince
         return true;
     }
-    if(game->pid_p[1] == -1){                                          //se il player 2 ha abbandonato
+    if(game->pid_p2 == -1){                                          //se il player 2 ha abbandonato
         printf("\nIl player 2 ha abbandonato.\n");
         game->winner = 0;                                              //il player 1 vince
         return true;
@@ -233,8 +250,8 @@ void sigIntManage(int sig){
 void memoryClosing(){
     if(shmid != -1) {
         game = (struct Tris*)shmat(shmid, NULL, 0);                        //attacco la struct alla memoria condivisa (cast necessario) 
-        game->pid_p[0] = -1;                                               //comunico al server che il player 1 ha abbandonato
-        game->pid_p[1] = -1;                                               //comunico al server che il player 2 ha abbandonato
+        game->pid_p1 = -1;                                               //comunico al server che il player 1 ha abbandonato
+        game->pid_p2 = -1;                                               //comunico al server che il player 2 ha abbandonato
         if(pthread_mutex_destroy(&game->mutex) == 0)                       //chiudo il mutex
             printf("\nMutex chiuso.");
         shmdt(game);                                                       //stacco la struct dalla memoria condivisa
