@@ -9,6 +9,7 @@
 //librerie richieste
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
 #include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
@@ -96,7 +97,7 @@ void signalManage(){
 }
 
 void enterSession(){
-    key_t key = ftok("TriServer.c", 111);                               //accedo ai semafori creati dal server
+    key_t key = ftok("src/TriServer.c", 111);                               //accedo ai semafori creati dal server
     if(key == -1){
         printf("\nErrore nella generazione della chiave.\n");
         exit(0);
@@ -124,7 +125,6 @@ void waitPlayers(){
         game->pid_p1 = getpid();                                        //significa che sono io il primo giocatore
         player = 0;                                                     //imposto il player locale
         enemy = 1;                                                      //imposto il player avversario
-        printf("\nIn attesa del secondo giocatore...\n");               //comunico al player che è in attesa
         pthread_mutex_unlock(&game->mutex);                             //esco dalla SC
         struct sembuf sops = {0, 1, 0};                                 //inizializzo la struttura per l'operazione (+1)
         if(semop(semid, &sops, 1) == -1){                               //comunichiamo al server che siamo entrati come P1
@@ -133,8 +133,10 @@ void waitPlayers(){
         }
         printf("\nPlayer %s connesso.\n", playername);                  //comunico al player che è connesso
         printf("\nIn attesa del secondo giocatore...\n");               //comunico al player che è in attesa di P2
-        if(semop(semid, &sops, 1) == -1){                               //attendo player 2
-            printf("\nErrore nell'attesa dei giocatori.\n");            //gestione errore
+        struct sembuf sops2 = {0, -1, 0};                               //cambio la struttura per l'operazione (-1) per attesa di P2
+        if(semop(semid, &sops2, 1) == -1){                              //attendo player 2
+            if(errno != EINTR)
+                printf("\nErrore nell'attesa dei giocatori.\n");            //gestione errore
             closeGame();
         }
     }
@@ -201,7 +203,6 @@ void play(){
 }
 
 void victory(){
-    pthread_mutex_lock(&game->mutex);
     if(game->winner == player){                                          //se hai vinto
         if(player){                                                      //e sei player 2
             if(game->pid_p1 == -1)                                       //P1 ha abbandonato
@@ -225,9 +226,7 @@ void victory(){
     else                                                                 //se è un pareggio
         printf("\nPareggio!\n");
 
-    pthread_mutex_unlock(&game->mutex);
     return;
-     /*if(game->winner == 2) -> closeGame(); */
 }
 
 void sigTimeout(){                                                      //se scade il tempo a uno dei due giocatori, la partita finisce
@@ -239,9 +238,10 @@ void sigTimeout(){                                                      //se sca
 
 void sigIntManage(int sig){
     printf("\nAbbandono partita in corso...\n");
-    pthread_mutex_lock(&game->mutex);                                   //entro in SC
-    game->pid_p1 = -1;                                                  //comunico abbandono a Server
-    pthread_mutex_unlock(&game->mutex);                                 //esco da SC
+    if(player)                                                          //in base a se sono player 2 o player 1
+        game->pid_p2 = -1;
+    else
+        game->pid_p1 = -1;                                              //comunico abbandono a Server
     signalToServer();                                                   //comunico al server. Non importa il tipo di segnale (SIGUSR1 o SIGUSR2)
     closeGame();
 }
@@ -252,9 +252,11 @@ void signalToServer(){
 }
 
 void sigFromServer(int sig){
-                                                                        //se il server ha chiuso la partita
+    if(sig == SIGUSR1)                                                  //SIGUSR1 = server abbandona
         printf("\nLa partita termina in modo anomalo perchè il server è caduto.\n");
-        closeGame();
+    else                                                                //SIGUSR2 = avversario ha abbandonato
+        victory();                                                      //comunico il vincitore
+    closeGame();
 }
 
 void closeGame(){

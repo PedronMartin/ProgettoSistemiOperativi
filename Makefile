@@ -4,8 +4,8 @@
 CC = gcc
 
 # Definisci i file di origine e gli eseguibili
-CLIENT_SRC = TriClient.c
-SERVER_SRC = TriServer.c
+CLIENT_SRC = src/TriClient.c
+SERVER_SRC = src/TriServer.c
 CLIENT_BIN = Client
 SERVER_BIN = Server
 
