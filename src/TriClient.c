@@ -18,6 +18,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include "TrisStruct.h"
+#include "errorExit.h"
 
 //dichiaraioni delle funzioni
 void checkParameters(int, char*[]);

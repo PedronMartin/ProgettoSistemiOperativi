@@ -19,7 +19,9 @@
 #include <pthread.h>
 #include <signal.h>
 #include <sys/mman.h>
+#include <limits.h>
 #include "TrisStruct.h"
+#include "errorExit.h"
 
 //dichiaraioni delle funzioni
 void checkParameters(int, char*[]);
@@ -42,7 +44,7 @@ void memoryClosing();
 int shmid = -1, semid = -1;
 struct Tris *game;
 int ctrlC = 0;
-int currentSignal = 0;
+int playerConnected = 0;
 
 int main(int argc, char *argv[]){
 
@@ -78,58 +80,73 @@ int main(int argc, char *argv[]){
 
     //chiusura programma
     return 0;
-}   
+}
 
 void checkParameters(int argc, char *argv[]){
     if(argc != 4){
         printf("\nFactor esecuzione errato.\nFormato richiesto: ./eseguibile <tempo_timeout_mossa> <simbolo_p1> <_simbolo_p2>.\n\n");
-        exit(0);
+        exit(EXIT_FAILURE);
     }
-    char timeout = atoi(argv[1]);                                      //converto il tempo di timeout in intero
-    if(timeout < 0){                                                   //controllo che il tempo di timeout sia un intero positivo
+    int valid = is_number(argv[1]);                                    //controllo che il tempo di timeout sia un intero
+    if(valid == 0){                                                    //se non è un intero
+        printf("\nIl tempo di timeout della mossa deve essere un intero.\n");
+        exit(EXIT_FAILURE);
+    }
+    if(valid < 0){                                                     //controllo che il tempo di timeout sia un intero positivo
         printf("\nIl tempo di timeout della mossa deve essere >0 (0 se non lo si vuole).\n");
-        exit(0);
+        exit(EXIT_FAILURE);
     }
     char p1 = *argv[2];                                                //assegno il simbolo del player 1
     char p2 = *argv[3];                                                //assegno il simbolo del player 2
     if(p1 == p2){                                                      //controllo che i simboli dei due player siano diversi
         printf("\nI simboli dei due giocatori devono essere diversi.\n");
-        exit(0);
+        exit(EXIT_FAILURE);
     }
+}
+
+int is_number(char *parameter){                       
+    char *end;                                                         //puntatore a fine stringa                  
+    long ris = strtol(parameter, &end, 10);                            //conversione in base 10
+    if(*end != '\0' || ris > INT_MAX || ris < INT_MIN)                 //se != '\0' allora c'è un carattere non numerico
+        return 0;                                                      //se > INT_MAX o < INT_MIN allora è fuori dal range di int
+    return (int) ris;
 }
 
 void signalManage(){
     if(signal(SIGALRM, sigTimeout) == SIG_ERR){                        //gestione segnale per timeout
-        printf("\nErrore nella gestione del segnale.\n");
-        exit(-1);
+        errorExit("\nErrore nella gestione del segnale.\n");
+        exit(EXIT_FAILURE);
     }
-    //gestione del segnale Ctrl ^C prima che i giocatori siano connessi
+    //gestione del segnale Ctrl ^C prima che i giocatori siano connessi e gestione della caduta del terminale
     if(signal(SIGINT, sigIntManage) == SIG_ERR || signal(SIGHUP, sigIntManage) == SIG_ERR){
-        printf("\nErrore nella gestione del segnale.\n");
+        errorExit("\nErrore nella gestione del segnale.\n");
         memoryClosing();
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
     if(signal(SIGUSR1, checkYield) == SIG_ERR){                        //gestione segnale per abbandono di un player
-        printf("\nErrore nella gestione del segnale.\n");
+        errorExit("\nErrore nella gestione del segnale.\n");
         memoryClosing();
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
 }
 
 bool memoryCreation(){
     bool result = false;
-    key_t key = ftok("src/TriServer.c", 111);                              //creo la chiave unica per IPC
+    key_t key = ftok("src/TriServer.c", 111);                          //creo la chiave unica per IPC
     if(key == -1) {                                                    //gestione errore
-        printf("\nErrore nella creazione della chiave.\n");
-        exit(0);
+        errorExit("\nErrore nella creazione della chiave.\n");
+        exit(EXIT_FAILURE);
     }
 
     //creo la memoria condivisa (fallisce se già esistente)
     shmid = shmget(key, sizeof(struct Tris), 0666 | IPC_CREAT | IPC_EXCL);
     if(shmid == -1 && errno == EEXIST){                                //gestione errore
-        printf("\nErrore nella creazione della memoria condivisa.\n");
-        printf("Probabile causa: memoria condivisa già esistente.\n");
+        errorExit("\nErrore nella creazione della memoria condivisa.\nProbabile causa: memoria condivisa già esistente.\n");
         shmid = shmget(key, 1024, 0666);                               //accedo alla memoria condivisa già esistente
+        result = false;
+    }
+    else if (shmid == -1 && errno != EEXIST){                          //gestione errore
+        errorExit("\nErrore nella creazione della memoria condivisa.\n");
         result = false;
     }
     else
@@ -137,9 +154,12 @@ bool memoryCreation(){
 
     semid = semget(key, 3, 0666 | IPC_CREAT | IPC_EXCL);               //creo i semafori (fallisce se già esistente)       
     if(semid == -1 && errno == EEXIST){                                //gestione errore
-        printf("\nErrore nella creazione dei semafori.\n");
-        printf("Probabile causa: semafori già esistenti.\n");
+        errorExit("\nErrore nella creazione dei semafori.\nProbabile causa: semafori già esistenti.\n");
         semid = semget(key, 3, 0666);                                  //accedo ai semafori già esistenti
+        result = false;
+    }
+    else if (semid == -1 && errno != EEXIST){                         //gestione errore
+        errorExit("\nErrore nella creazione dei semafori.\n");
         result = false;
     }
     return result;
@@ -148,9 +168,9 @@ bool memoryCreation(){
 void boardCreation(char *argv[]){
     game = (struct Tris*)shmat(shmid, NULL, 0);                        //attacco la memoria condivisa al processo
     if(game == (void*)-1){                                             //gestione errore (cast per compatibilità puntatore)
-        printf("\nErrore nell'attacco alla memoria condivisa.\n");
+        errorExit("\nErrore nell'attacco alla memoria condivisa.\n");
         memoryClosing();
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
     pthread_mutex_init(&game->mutex, NULL);                            //inizializzo il mutex
     pthread_mutex_lock(&game->mutex);                                  //entro in SC
@@ -171,59 +191,62 @@ void boardCreation(char *argv[]){
 void waitPlayers(){
     printf("\nAttesa dei giocatori...\n");
     if(semctl(semid, 0, SETVAL, 0) == -1){                             //inizializzo il semaforo indice 0 in attesa dei giocatori
-        printf("\nErrore nell'inizializzazione del semaforo 1.\n");    //gestione errore
+        errorExit("\nErrore nell'inizializzazione del semaforo 1.\n"); //gestione errore
         memoryClosing();
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
     struct sembuf sops = {0, -1, 0};                                   //inizializzo la struttura per la wait
-    if(semop(semid, &sops, 1) == -1){                                  //eseguo la wait
-        if(errno != EINTR)
-            printf("\nErrore nell'attesa dei giocatori.\n");               //gestione errore
-        memoryClosing();
-        exit(-1);
+    while(semop(semid, &sops, 1) == -1){                               //eseguo la wait
+        if(errno != EINTR){
+            errorExit("\nErrore nell'attesa del giocatore 1.\n");      //gestione errore
+            memoryClosing();
+            exit(EXIT_FAILURE);
+        }
     }
     printf("\nPlayer 1 connesso.\n");
     printf("Attesa del secondo giocatore...\n");
-    if(semop(semid, &sops, 1) == -1){                                  //eseguo la wait
-        if(errno != EINTR)
-            printf("\nErrore nell'attesa dei giocatori.\n");           //gestione errore
-        if(kill(game->pid_p1, SIGUSR1) == -1)                          //comunico l'abbandono del player 1
-            printf("\nErrore nella comunicazione con il player 1.\n");
-        memoryClosing();
-        exit(-1);
+    while(semop(semid, &sops, 1) == -1){                               //eseguo la wait in ciclo
+        if(errno != EINTR){                                            //errore segnale di interruzione
+            errorExit("\nErrore nell'attesa dei giocatori.\n");        
+            if(kill(game->pid_p1, SIGUSR1) == -1)                      //comunico l'abbandono del player 1
+                errorExit("\nErrore nella comunicazione con il player 1.\n");
+            memoryClosing();
+            exit(EXIT_FAILURE);
+        }
+        else playerConnected = 1;                                      //se il segnale è di interruzione, gestisco la comunicazione con P1
     }
     printf("\nPlayer 2 connesso.\n");
     
     if(semctl(semid, 1, SETVAL, 0) == -1){                             //inizializzo il semaforo per turno P1 a 0
-        printf("\nErrore nell'inizializzazione del semaforo 1.\n");    //gestione errore
+        errorExit("\nErrore nell'inizializzazione del semaforo 1.\n"); //gestione errore
         memoryClosing();
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
     if(semctl(semid, 2, SETVAL, 0) == -1){                             //inizializzo il semaforo per turno P2 a 0
-        printf("\nErrore nell'inizializzazione del semaforo 1.\n");    //gestione errore
+        errorExit("\nErrore nell'inizializzazione del semaforo 1.\n"); //gestione errore
         memoryClosing();
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
 }
 
 void Tris(){
     while(game->winner == -1){                                         //finchè non c'è un vincitore
-        struct sembuf sops_plus = {game->currentPlayer + 1, 1, 0};         //inizializzo la struttura per l'operazione (+1) per avviare i turni
-        struct sembuf sops_minus = {game->currentPlayer + 1, -1, 0};       //inizializzo la struttura per l'operazione (-1) per attendere fine turni
+        struct sembuf sops_plus = {game->currentPlayer + 1, 1, 0};     //inizializzo la struttura per l'operazione (+1) per avviare i turni
+        struct sembuf sops_minus = {game->currentPlayer + 1, -1, 0};   //inizializzo la struttura per l'operazione (-1) per attendere fine turni
         printf("\nTurno di Player %d.\n", game->currentPlayer + 1);
-        while(semop(semid, &sops_plus, 1) == -1){                         //comunico a player che può giocare
+        while(semop(semid, &sops_plus, 1) == -1){                      //comunico a player che può giocare
             if(errno != EINTR){
-                printf("\nErrore nel'avvio del turno dei giocatori.\n");           //gestione errore
+                errorExit("\nErrore nel'avvio del turno dei giocatori.\n");
                 memoryClosing();
-                exit(0);
+                exit(EXIT_FAILURE);
             }
         }
         alarm(game->timeout);                                          //imposto il timeout
-        while(semop(semid, &sops_minus, 1) == -1){                        //attendo che player abbia finito di giocare
+        while(semop(semid, &sops_minus, 1) == -1){                     //attendo che player abbia finito di giocare
             if(errno != EINTR){
-                printf("\nErrore nell'attesa dei giocatori.\n");           //gestione errore
+                errorExit("\nErrore nell'attesa del turno dei giocatori.\n");
                 memoryClosing();
-                exit(0);
+                exit(EXIT_FAILURE);
             }
         }
         alarm(0);                                                      //resetto il timer
@@ -239,8 +262,11 @@ void Tris(){
     }
     //comunico ai player la fine della partita
     if(kill(game->pid_p1, SIGUSR2) == -1 || kill(game->pid_p2, SIGUSR2) == -1)
-        printf("\nErrore nella comunicazione con i player.\n");
-    shmdt(game);                                                       //stacco la memoria condivisa
+        errorExit("\nErrore nella comunicazione con i player.\n");
+    if(shmdt(game) == -1){                                             //tentativo di stacco della memoria condivisa
+        errorExit("\nErrore nello stacco della memoria condivisa.\n");
+        exit(EXIT_FAILURE);
+    }                                                      
     return;
 }
 
@@ -284,7 +310,7 @@ void sigTimeout(int sig){
     pthread_mutex_lock(&game->mutex);                                  //entro in SC
                                                                        //mando il segnale ai player
     if(kill(game->pid_p1, SIGALRM) == -1 || kill(game->pid_p2, SIGALRM) == -1)
-        printf("\nErrore nell'invio del segnale al player 1.\n");
+        errorExit("\nErrore nell'invio del segnale ai player.\n");
 
     if(game->currentPlayer == 0){                                      //se il player corrente è il player 1
         printf("\nTimeout scaduto per il Player 1.\n");
@@ -321,17 +347,18 @@ void checkYield(){
 }
 
 void sigIntManage(int sig){
-    /*
     if(ctrlC == 0){                                                   //se il segnale è stato ricevuto per la prima volta
         ctrlC++;                                                      //incremento il contatore
         printf("\nSegnale Ctrl ^C ricevuto. Premi di nuovo per chiudere...\n");
         return;
     }
-    else                                                              //se il segnale è stato ricevuto per la seconda volta
-    */ //chiedere a Drago se va bene
+    //se il segnale è stato ricevuto per la seconda volta
+    if (playerConnected == 1)                                         //se il player 1 è connesso
+        if (kill(game->pid_p1, SIGUSR1) == -1)                        //comunico l'uscita al player 1
+            errorExit("\nErrore nella comunicazione con il player 1.\n");
     printf("\nChiusura del server forzata.\n");
     memoryClosing();                                                  //caso in cui i processi non sono connessi quindi non comunico
-    exit(-1);
+    exit(0);
 }
 
 void sigIntManage2(int sig){
@@ -350,7 +377,7 @@ void sigIntManage2(int sig){
     game->pid_s = -1;                                                 //salva abbandono
                                                                       //avviso i player che la partita termina in modo anomalo
     if(kill(game->pid_p1, SIGUSR1) == -1 || kill(game->pid_p2, SIGUSR1))
-        printf("\nErrore nella comunicazione di chiusura anomala ai player.\n");
+        errorExit("\nErrore nella comunicazione di chiusura anomala ai player.\n");
     memoryClosing();
     exit(0);
 }
@@ -358,14 +385,15 @@ void sigIntManage2(int sig){
 void memoryClosing(){
     if(shmid != -1) {
         game = (struct Tris*)shmat(shmid, NULL, 0);                    //attacco la shm al processo (in alcuni percorsi non lo è già) 
-        if(pthread_mutex_destroy(&game->mutex) == 0)                   //chiudo il mutex
-            printf("\nMutex chiuso.");
+        if(pthread_mutex_destroy(&game->mutex) == -1)                  //chiudo il mutex
+            errorExit("\nErrore in chiusura mutex.\n");
         shmdt(game);                                                   //stacco la struct dalla memoria condivisa
-        if(shmctl(shmid, IPC_RMID, NULL) == 0);                        //chiudo la memoria condivisa (null è puntatore a struttura di controllo, non necessario)
-            printf("\nMemoria condivisa chiusa.\n");
+        if(shmctl(shmid, IPC_RMID, NULL) == -1);                       //chiudo la memoria condivisa (null è puntatore a struttura di controllo, non necessario)
+            errorExit("\nErrore nella chiusura della memoria condivisa.\n");
     }
-    if(semctl(semid, 0, IPC_RMID) == 0)                                //chiudo i semafori
-        printf("Semafori chiusi.\n");
+    if(semid != -1)                                                    //chiudo i semafori
+        if(semctl(semid, 0, IPC_RMID) == -1)
+            errorExit("\nErrore nella chiusura dei semafori.\n");
 
 //CONTROLLARE COCN IPCS SU SHELL LA DIMENSIONE DELLA MEMORIA CONDIVISA E QUANTI PROCESSI SONO ATTUALMENTE ATTACCATI
 //nel conteggio dei byte non dimenticare \0
