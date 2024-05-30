@@ -2,6 +2,6 @@
 #include <stdio.h>
 #include <errno.h>
 
-void errExit(const char *msg) {
+void errorExit(const char *msg) {
     perror(msg);
 }

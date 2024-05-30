@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <unistd.h>
+#include <pthread.h>
 #include "TrisStruct.h"
 
 void printBoard(struct Tris* game){              //funzione per la stampa della matrice di gioco
