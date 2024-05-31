@@ -96,7 +96,7 @@ void signalManage(){
 }
 
 void enterSession(){
-    key_t key = ftok("./Server", 111);                                   //accedo ai semafori creati dal server
+    key_t key = ftok("../src/TriServer.c", 111);                        //accedo ai semafori creati dal server
     if(key == -1){
         errorExit("\nErrore nella generazione della chiave.\n");
         exit(EXIT_FAILURE);
@@ -106,7 +106,7 @@ void enterSession(){
         errorExit("\nErrore nell'accesso ai semafori.\n");
         exit(EXIT_FAILURE);
     }
-    shmid = shmget(key, sizeof(struct Tris), 0666);                     //accedo alla memoria condivisa creata dal server
+    shmid = shmget(key, sizeof(game), 0666);                           //accedo alla memoria condivisa creata dal server
     if(shmid == -1){
         errorExit("\nErrore nell'accesso alla memoria condivisa.\n");
         exit(EXIT_FAILURE);
@@ -139,7 +139,6 @@ void waitPlayers(){
                 closeErrorGame();
             }
         }
-        player2Connected = 1;                                           //ora un eventuale abbandono verrà gestito in modo diverso
     }
     else{                                                               //se il primo giocatore è già entrato
         game->pid_p2 = getpid();                                        //significa che sono il secondo giocatore
@@ -153,6 +152,7 @@ void waitPlayers(){
         }
         printf("\nPlayer %s connesso.\n", playername);                  //comunico al player che è connesso in output
     }
+    player2Connected = 1;                                               //ora un eventuale abbandono verrà gestito in modo diverso
     printf("\nIl gioco può iniziare. Tu sei il player con simbolo %c\n", game->simbolo[player]);
     printf("Il tuo avversario è il player con simbolo %c\n", game->simbolo[enemy]);
 }
@@ -168,6 +168,7 @@ void play(){
         errorExit("\nErrore nell'attesa del turno.\n");                 //gestione errore
         closeErrorGame();
     }
+    char input[10];
     while(game->winner == -1){
         printBoard(game);                                               //stampa la matrice di gioco
         int flag = 1;
@@ -175,14 +176,22 @@ void play(){
         do{
             flag = 1;
             printf("\nInserisci riga e colonna dove inserire il simbolo: ");
-            scanf("%d %d", &row, &column);                              //inserimento riga e colonna
-            if(row < 0 || row > righe - 1 || column < 0 || column > colonne - 1){             
+            fgets(input, sizeof(input), stdin);                         //leggo da tastiera
+            if(sscanf(input, "%d %d", &row, &column) != 2){             //controllo inserimento di due interi in buffer
+                printf("\nValori inseriti devono essere numeri sensati.\n");  
+                                                                        //2 sono gli elementi che devono essere letti da sscanf con successo
+                flag = 0;                                               //se i valori non sono numerici ripeto il ciclo
+                continue;
+            }
+            else if(row < 0 || row > righe - 1 || column < 0 || column > colonne - 1){             
                 printf("\nValori inseriti non validi.\n");
                 flag = 0;                                               //se i valori non sono validi ripeto il ciclo
+                continue;
             }
             else if(game->board[row][column] != -1){                    //se la casella è già occupata ripeto il ciclo
                 printf("\nCasella già occupata.\n");
                 flag = 0;
+                continue;
             }
         }while(!flag);
 
@@ -245,8 +254,10 @@ void sigIntManage(int sig){
         else
             game->pid_p1 = -1;                                         //comunico abbandono a Server
     }
-    else
+    else{
         printf("\nAbbandono matchmaking...\n\n");
+        game->pid_p1 = -1;                                             //comunico abbandono a Server
+    }
 
     signalToServer(player2Connected);
     closeGameSuccessfull();
@@ -267,9 +278,9 @@ void signalToServer(int which){
 }
 
 void sigFromServer(int sig){
-    if(sig == SIGUSR1)                                                 //SIGUSR1 = server abbandona
+    if(sig == SIGUSR1)                                                 //SIGUSR1 = server ha abbandonato
         printf("\nLa partita termina in modo anomalo perchè il server è caduto.\n");
-    else                                                               //SIGUSR2 = avversario ha abbandonato
+    else                                                               //SIGUSR2 = partita terminata con successo
         victory();                                                     //comunico il vincitore
     closeGameSuccessfull();
 }

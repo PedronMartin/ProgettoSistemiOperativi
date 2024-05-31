@@ -139,7 +139,7 @@ void signalManage(){
 
 bool memoryCreation(){
     bool result = false;
-    key_t key = ftok("./Server", 111);                          //creo la chiave unica per IPC
+    key_t key = ftok("../src/TriServer.c", 111);                              //creo la chiave unica per IPC
     if(key == -1) {                                                    //gestione errore
         errorExit("\nErrore nella creazione della chiave.\n");
         exit(EXIT_FAILURE);
@@ -196,13 +196,13 @@ void boardCreation(char *argv[]){
 }
 
 void waitPlayers(){
+    struct sembuf sops = {0, -1, 0};                                   //inizializzo la struttura per la wait
     printf("\nAttesa del giocatore 1...\n");
     if(semctl(semid, 0, SETVAL, 0) == -1){                             //inizializzo il semaforo indice 0 in attesa dei giocatori
         errorExit("\nErrore nell'inizializzazione del semaforo 1.\n"); //gestione errore
         memoryClosing();
         exit(EXIT_FAILURE);
     }
-    struct sembuf sops = {0, -1, 0};                                   //inizializzo la struttura per la wait
     while(semop(semid, &sops, 1) == -1){                               //eseguo la wait
         if(errno != EINTR){
             errorExit("\nErrore nell'attesa del giocatore 1.\n");      //gestione errore
@@ -222,8 +222,9 @@ void waitPlayers(){
             exit(EXIT_FAILURE);
         }
         if(errno == EINTR && playerConnected == 0){
-            printf("\nPlayer 1 disconnesso durante il matchmaking.\n");
-            waitPlayers();                                             //se player 1 si è sconnesso durante l'attesa, ripartiamo con l'attesa del player 1
+            printf("\nPlayer 1 disconnesso durante il matchmaking. Necessario restart applicazione.\n");
+            memoryClosing();                                           //se player 1 si è sconnesso durante l'attesa, chiudo tutto
+            exit(EXIT_SUCCESS);
         }
     }
     printf("\nPlayer 2 connesso.\n");
@@ -246,6 +247,7 @@ void sigP1Disconnected(){
 }
 
 void Tris(){
+    printf("\nLa partita ha inizio...\n");
     while(game->winner == -1){                                         //finchè non c'è un vincitore
         struct sembuf sops_plus = {game->currentPlayer + 1, 1, 0};     //inizializzo la struttura per l'operazione (+1) per avviare i turni
         struct sembuf sops_minus = {game->currentPlayer + 1, -1, 0};   //inizializzo la struttura per l'operazione (-1) per attendere fine turni
@@ -340,6 +342,7 @@ void sigTimeout(int sig){
     }
     pthread_mutex_unlock(&game->mutex);                                //esco da SC
     memoryClosing();
+    printf("\nChiusura partita in corso.\n");
     exit(0);
 }
 
