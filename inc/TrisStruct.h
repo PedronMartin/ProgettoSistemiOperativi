@@ -10,6 +10,7 @@
         pid_t pid_p1;               //pid giocatore 1
         pid_t pid_p2;               //pid giocatore 2
         pid_t pid_s;                //pid server
+        int bot;                    //flag per il bot
         int winner;                 //vincitore
     };
     

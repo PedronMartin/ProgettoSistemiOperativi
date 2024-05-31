@@ -31,6 +31,7 @@ bool memoryCreation();
 void boardCreation(char*[]);
 void waitPlayers();
 void sigP1Disconnected();
+void playAgainstBot();
 void Tris();
 bool checkVictory();
 bool checkTie();
@@ -189,6 +190,7 @@ void boardCreation(char *argv[]){
     game->pid_p1 = -1;                                                 //inizializzo il pid player 1
     game->pid_p2 = -1;                                                 //inizializzo il pid player 2
     game->pid_s = getpid();                                            //assegno il pid del server
+    game->bot = 0;                                                     //inizializzo il bot a 0
     for(int i = 0; i < righe; i++)                                     //inizializzo la matrice di gioco (valori a -1)
         for(int j = 0; j < colonne; j++)
             game->board[i][j] = -1;
@@ -213,6 +215,7 @@ void waitPlayers(){
     printf("\nPlayer 1 connesso.\n");
     printf("Attesa del secondo giocatore...\n");
     playerConnected = 1;                                               //imposto il flag per comunicare a P1 un eventuale  
+    playAgainstBot();                                                  //controllo se è stata chiesta partita contro bot
     while(semop(semid, &sops, 1) == -1){                               //eseguo la wait in ciclo
         if(errno != EINTR){                                            //errore segnale di interruzione
             errorExit("\nErrore nell'attesa dei giocatori.\n");        
@@ -246,6 +249,31 @@ void sigP1Disconnected(){
     return;                                                            //e ritorno nell'attesa
 }
 
+void playAgainstBot(){
+    pthread_mutex_lock(&game->mutex);                                  //entro in SC
+    if(game->bot == 0){                                                //partita normale
+        pthread_mutex_unlock(&game->mutex);                            //esco da SC
+        return;
+    }
+    pthread_mutex_unlock(&game->mutex);                                //esco da SC
+    pid_t son = fork();                                                //altrimenti creo bot
+    switch(son){
+        case -1:                                                       //errore generazione figlio
+            errorExit("\nErrore nella creazione del bot.\n");          //se fallisce proseguo
+            break;
+        case 0:                                                        //codice figlio
+            execl("./Bot", "Bot", NULL);                               //eseguo il client bot
+            errorExit("\nErrore nell'esecuzione del bot.\n");          //se fallisce proseguo
+            break;
+        default:
+            return;                                                    //padre torna all'esecuzione normale
+    }
+    if(kill(game->pid_p1, SIGUSR1) == -1)                              //comunico errore al player 1
+        errorExit("\nErrore nella comunicazione con il player 1.\n");
+    memoryClosing();                                                   //esco
+    exit(EXIT_FAILURE);
+}
+
 void Tris(){
     printf("\nLa partita ha inizio...\n");
     while(game->winner == -1){                                         //finchè non c'è un vincitore
@@ -261,8 +289,15 @@ void Tris(){
         }
         alarm(game->timeout);                                          //imposto il timeout
         while(semop(semid, &sops_minus, 1) == -1){                     //attendo che player abbia finito di giocare
-            if(errno != EINTR){
+            if(errno != EINTR){                                        //errore esterno (es. chiusura ipcs)
                 errorExit("\nErrore nell'attesa del turno dei giocatori.\n");
+                if(game->currentPlayer == 0){                          //in base al player corrente
+                    if(kill(game->pid_p1, SIGTERM) == -1)              //forzo la chiusura del processo bloccato sulla scanf
+                        errorExit("\nErrore nella forzatura di chiusura del processo.\n");
+                }
+                else                                                   //l'altro invece chiude regolarmente per errore
+                    if(kill(game->pid_p2, SIGTERM) == -1)
+                        errorExit("\nErrore nella forzatura di chiusura del processo.\n");
                 memoryClosing();
                 exit(EXIT_FAILURE);
             }
@@ -349,13 +384,13 @@ void sigTimeout(int sig){
 void checkYield(){
     pthread_mutex_lock(&game->mutex);                                 //entro in SC
     if(game->pid_p1 == -1){                                           //se il player 1 ha abbandonato
-        printf("\nIl player 1 ha abbandonato.\n");
+        printf("\nIl player 1 ha abbandonato. Vince player 2.\n");
         game->winner = 1;                                             //il player 2 vince
         if(kill(game->pid_p2, SIGUSR2) == -1)                         //comunico vittoria per abbandono
             printf("\nErrore nella comunicazione con il player 2.\n");
     }
     else{
-        printf("\nIl player 2 ha abbandonato.\n");
+        printf("\nIl player 2 ha abbandonato. Vince player 2.\n");
         game->winner = 0;                                             //il player 1 vince
         if(kill(game->pid_p1, SIGUSR2) == -1)                         //comunico vittoria per abbandono
             printf("\nErrore nella comunicazione con il player 1.\n");

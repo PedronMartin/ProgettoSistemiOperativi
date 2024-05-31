@@ -41,6 +41,7 @@ int player;
 int enemy;
 int row, column;
 int player2Connected = 0;
+int bot = 0;
 struct Tris *game;
 
 int main(int argc, char *argv[]){
@@ -76,6 +77,8 @@ void checkParameters(int argc, char *argv[]){
         printf("\nFormato richiesto: ./eseguibile <nome_utente> oppure ./eseguibile <nome_utente> *\n\n");
         exit(EXIT_FAILURE);
     }
+    if(argc == 3 && *argv[2] == '*')
+        bot = 1;
 }
 
 void signalManage(){
@@ -124,11 +127,12 @@ void waitPlayers(){
         game->pid_p1 = getpid();                                        //significa che sono io il primo giocatore
         player = 0;                                                     //imposto il player locale
         enemy = 1;                                                      //imposto il player avversario
+        game->bot = bot;                                                //imposto se è stato chiesto di giocare con un bot
         pthread_mutex_unlock(&game->mutex);                             //esco dalla SC
         struct sembuf sops = {0, 1, 0};                                 //inizializzo la struttura per l'operazione (+1)
         if(semop(semid, &sops, 1) == -1){                               //comunichiamo al server che siamo entrati come P1
             errorExit("\nErrore nella comunicazione della connessione.\n");
-            closeErrorGame();
+            exit(EXIT_FAILURE);                                         //non siamo ancora entrati quindi uscita classica
         }
         printf("\nPlayer %s connesso.\n", playername);                  //comunico al player che è connesso in output
         printf("\nIn attesa del secondo giocatore...\n");               //comunico al player che è in attesa di P2
