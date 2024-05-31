@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <string.h>
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/ipc.h>
@@ -22,6 +23,7 @@
 #include <limits.h>
 #include "TrisStruct.h"
 #include "errorExit.h"
+#include "SignalMask.h"
 
 //dichiaraioni delle funzioni
 void checkParameters(int, char*[]);
@@ -54,13 +56,20 @@ int main(int argc, char *argv[]){
     //controllo il numero dei valori inseriti da terminale
     checkParameters(argc, argv);
 
+    //settaggio della maschera dei segnali
+    sigset_t mask = signalMask();
+    if(sigprocmask(SIG_SETMASK, &mask, NULL) == -1){
+        errorExit("\nErrore nella settaggio della maschera dei segnali.\n");
+        exit(EXIT_FAILURE);
+    }
+
     //gestione dei segnali
     signalManage();
 
     //creazione memoria condivisa per comunicazione tra i processi
     if(!memoryCreation()){
         memoryClosing();
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
 
     //creazione campo e variabili di gioco
@@ -70,9 +79,9 @@ int main(int argc, char *argv[]){
     waitPlayers();
 
     //cambio la gestione del segnale Ctrl ^C, in modo da comunicare ai 2 processi connessi eventuali uscite
-    if(signal(SIGINT, sigIntManage2) == SIG_ERR || signal(SIGHUP, sigIntManage2) == SIG_ERR){
-        printf("\nErrore nella gestione del segnale.\n");
-        exit(-1);
+    if(signal(SIGINT, sigIntManage2) == SIG_ERR || signal(SIGHUP, sigIntManage2) == SIG_ERR || signal(SIGTERM, sigIntManage2) == SIG_ERR){
+        printf("\nErrore nella gestione del segnale SIGINT, SIGHUP o SIGTERM.\n");
+        exit(EXIT_FAILURE);
     }
 
     //funzione di gioco principale
@@ -99,9 +108,11 @@ void checkParameters(int argc, char *argv[]){
         printf("\nIl tempo di timeout della mossa deve essere >0 (0 se non lo si vuole).\n");
         exit(EXIT_FAILURE);
     }
-    char p1 = *argv[2];                                                //assegno il simbolo del player 1
-    char p2 = *argv[3];                                                //assegno il simbolo del player 2
-    if(p1 == p2){                                                      //controllo che i simboli dei due player siano diversi
+    if(strlen(argv[2]) != 1 || strlen(argv[3]) != 1) {                 //controllo lunghezza simboli
+        printf("\nI simboli dei giocatori devono essere singoli caratteri.\n\n");
+        exit(EXIT_FAILURE);
+    }
+    if(*argv[2] == *argv[3]){                                          //controllo che i simboli siano diversi
         printf("\nI simboli dei due giocatori devono essere diversi.\n");
         exit(EXIT_FAILURE);
     }
@@ -121,8 +132,8 @@ void signalManage(){
         exit(EXIT_FAILURE);
     }
     //gestione del segnale Ctrl ^C prima che i giocatori siano connessi e gestione della caduta del terminale
-    if(signal(SIGINT, sigIntManage) == SIG_ERR || signal(SIGHUP, sigIntManage) == SIG_ERR){
-        errorExit("\nErrore nella gestione del segnale SIGINT o SIGHUP.\n");
+    if(signal(SIGINT, sigIntManage) == SIG_ERR || signal(SIGHUP, sigIntManage) == SIG_ERR || signal(SIGTERM, sigIntManage) == SIG_ERR){
+        errorExit("\nErrore nella gestione del segnale SIGINT, SIGTERM oSIGHUP.\n");
         memoryClosing();
         exit(EXIT_FAILURE);
     }
@@ -314,10 +325,14 @@ void Tris(){
             game->currentPlayer = 0;
     }
     //comunico ai player la fine della partita
-    if(kill(game->pid_p1, SIGUSR2) == -1 || kill(game->pid_p2, SIGUSR2) == -1)
+    if(kill(game->pid_p1, SIGUSR2) == -1 || kill(game->pid_p2, SIGUSR2) == -1){
         errorExit("\nErrore nella comunicazione con i player.\n");
+        memoryClosing();
+        exit(EXIT_FAILURE);
+    }
     if(shmdt(game) == -1){                                             //tentativo di stacco della memoria condivisa
         errorExit("\nErrore nello stacco della memoria condivisa.\n");
+        memoryClosing();
         exit(EXIT_FAILURE);
     }                                                      
     return;
@@ -386,7 +401,7 @@ void checkYield(){
     if(game->pid_p1 == -1){                                           //se il player 1 ha abbandonato
         printf("\nIl player 1 ha abbandonato. Vince player 2.\n");
         game->winner = 1;                                             //il player 2 vince
-        if(kill(game->pid_p2, SIGUSR2) == -1)                         //comunico vittoria per abbandono
+        if(kill(game->pid_p2, SIGUSR2) == -1)                        //comunico vittoria per abbandono
             printf("\nErrore nella comunicazione con il player 2.\n");
     }
     else{
@@ -401,16 +416,22 @@ void checkYield(){
 }
 
 void sigIntManage(int sig){
-    if(ctrlC == 0){                                                   //se il segnale è stato ricevuto per la prima volta
-        ctrlC++;                                                      //incremento il contatore
-        printf("\nSegnale Ctrl ^C ricevuto. Premi di nuovo per chiudere...\n");
-        return;
+    if(sig == SIGINT){
+        if(ctrlC == 0){                                               //se il segnale è stato ricevuto per la prima volta
+            ctrlC++;                                                  //incremento il contatore
+            printf("\nSegnale Ctrl ^C ricevuto. Premi di nuovo per chiudere...\n");
+            return;
+        }
+        else                                                          //segnale ricevuto per la seconda volta
+            printf("\nChiusura del server forzata.\n");
     }
-    //se il segnale è stato ricevuto per la seconda volta
-    if(playerConnected == 1)                                         //se il player 1 è connesso
-        if(kill(game->pid_p1, SIGUSR1) == -1)                        //comunico l'uscita al player 1
+    else if(sig == SIGHUP)                                            //terminale caduto
+        printf("\nChiusura del server anomala per causa esterna. Terminale caduto.\n");
+    else
+        printf("\nChiusura del server forzata.\n");
+    if(playerConnected == 1)                                          //se il player 1 è connesso
+        if(kill(game->pid_p1, SIGUSR1) == -1)                         //comunico l'uscita al player 1
             errorExit("\nErrore nella comunicazione con il player 1.\n");
-    printf("\nChiusura del server forzata.\n");
     memoryClosing();                                                  //caso in cui i processi non sono connessi quindi non comunico
     exit(0);
 }
@@ -427,6 +448,8 @@ void sigIntManage2(int sig){
     }
     else if(sig == SIGHUP)                                            //terminale caduto
         printf("\nChiusura del server anomala per causa esterna. Terminale caduto.\n");
+    else
+        printf("\nChiusura del server forzata.\n");
 
     game->pid_s = -1;                                                 //salva abbandono
                                                                       //avviso i player che la partita termina in modo anomalo
@@ -461,7 +484,4 @@ void memoryClosing(){
             errorExit("\nErrore nella chiusura dei semafori.\n");
             exit(EXIT_FAILURE);
         }
-
-//CONTROLLARE COCN IPCS SU SHELL LA DIMENSIONE DELLA MEMORIA CONDIVISA E QUANTI PROCESSI SONO ATTUALMENTE ATTACCATI
-//nel conteggio dei byte non dimenticare \0
 }   

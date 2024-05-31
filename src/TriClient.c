@@ -19,6 +19,7 @@
 #include <signal.h>
 #include "TrisStruct.h"
 #include "errorExit.h"
+#include "SignalMask.h"
 
 //dichiaraioni delle funzioni
 void checkParameters(int, char*[]);
@@ -52,6 +53,13 @@ int main(int argc, char *argv[]){
     //salvo il nome del giocatore
     playername = argv[1];
 
+    //settaggio della maschera dei segnali
+    sigset_t mask = signalMask();
+    if(sigprocmask(SIG_SETMASK, &mask, NULL) == -1){
+        errorExit("\nErrore nella settaggio della maschera dei segnali.\n");
+        exit(EXIT_FAILURE);
+    }
+
     //gestione dei segnali
     signalManage();
 
@@ -70,11 +78,13 @@ int main(int argc, char *argv[]){
 
 void checkParameters(int argc, char *argv[]){
     if(argc != 2 && argc != 3){
-        printf("\nFactor esecuzione errato.\nFormato richiesto: ./eseguibile <nome_utente> oppure ./eseguibile <nome_utente> *\n\n");
+        printf("\nFactor esecuzione errato.\nFormato richiesto: ./eseguibile <nome_utente>");
+        printf("\nOppure ./eseguibile <nome_utente> '*' per giocare contro un bot.\n\n");
         exit(EXIT_FAILURE);
     }
     if(argc == 3 && *argv[2] != '*'){
-        printf("\nFormato richiesto: ./eseguibile <nome_utente> oppure ./eseguibile <nome_utente> *\n\n");
+        printf("\nFactor esecuzione errato.\nFormato richiesto: ./eseguibile <nome_utente>");
+        printf("\nOppure ./eseguibile <nome_utente> '*' per giocare contro un bot.\n\n");
         exit(EXIT_FAILURE);
     }
     if(argc == 3 && *argv[2] == '*')
@@ -87,13 +97,13 @@ void signalManage(){
         exit(EXIT_FAILURE);
     }
                                                                         //gestione del segnale SIGINT e SIGHUP
-    if(signal(SIGINT, sigIntManage) == SIG_ERR || signal(SIGHUP, sigIntManage) == SIG_ERR){
-        errorExit("\nErrore nella gestione del segnale SIGINT.\n");
+    if(signal(SIGINT, sigIntManage) == SIG_ERR || signal(SIGHUP, sigIntManage) == SIG_ERR || signal(SIGTERM, sigIntManage) == SIG_ERR){
+        errorExit("\nErrore nella gestione del segnale SIGINT, SIGHUP o SIGTERM.\n");
         exit(EXIT_FAILURE);
     }
                                                                         //gestione del segnale SIGUSR1 e SIGUSR2
     if(signal(SIGUSR1, sigFromServer) == SIG_ERR || signal(SIGUSR2, sigFromServer) == SIG_ERR){
-        errorExit("\nErrore nella gestione del segnale SIGUSR1.\n");
+        errorExit("\nErrore nella gestione del segnale SIGUSR1 e SIGUSR2.\n");
         exit(EXIT_FAILURE);
     }
 }
@@ -182,7 +192,7 @@ void play(){
             printf("\nInserisci riga e colonna dove inserire il simbolo: ");
             fgets(input, sizeof(input), stdin);                         //leggo da tastiera
             if(sscanf(input, "%d %d", &row, &column) != 2){             //controllo inserimento di due interi in buffer
-                printf("\nValori inseriti devono essere numeri sensati.\n");  
+                printf("\nInserisci due numeri separati da uno spazio.\n");  
                                                                         //2 sono gli elementi che devono essere letti da sscanf con successo
                 flag = 0;                                               //se i valori non sono numerici ripeto il ciclo
                 continue;
@@ -201,8 +211,8 @@ void play(){
 
         pthread_mutex_lock(&game->mutex);                               //entro in SC
         game->board[row][column] = player;                              //inserisco il simbolo nella matrice
-        printBoard(game);                                               //stampa la matrice di gioco post mossa
         pthread_mutex_unlock(&game->mutex);                             //esco da SC
+        printBoard(game);                                               //stampa la matrice di gioco post mossa
         if(semop(semid, &sops2, 1) == -1){                              //comunico al server che ho finito il turno
             errorExit("\nErrore nella comunicazione di fine turno\n");  //gestione errore
             closeErrorGame();
@@ -217,6 +227,8 @@ void play(){
 }
 
 void victory(){
+    printf("\nTAVOLA FINALE:\n");
+    printBoard(game);                                                   //stampa la matrice di gioco
     if(game->winner == player){                                         //se hai vinto
         if(player){                                                     //e sei player 2
             if(game->pid_p1 == -1)                                      //P1 ha abbandonato
@@ -244,13 +256,16 @@ void victory(){
 }
 
 void sigTimeout(){                                                     //se scade il tempo a uno dei due giocatori, la partita finisce
+    pthread_mutex_lock(&game->mutex);                                  //entro in SC
     if(game->winner != player)
         printf("\nTempo scaduto. Ricorda che hai un time di %d per giocare la tua mossa.\n", game->timeout);
     victory();                                                         //comunico il vincitore
+    pthread_mutex_unlock(&game->mutex);                                //esco da SC
     closeGameSuccessfull();
 }
 
 void sigIntManage(int sig){
+    pthread_mutex_lock(&game->mutex);                                  //entro in SC
     if(player2Connected){
         printf("\nAbbandono partita in corso...\n");
         if(player)                                                     //in base a se sono player 2 o player 1
@@ -263,6 +278,7 @@ void sigIntManage(int sig){
         game->pid_p1 = -1;                                             //comunico abbandono a Server
     }
 
+    pthread_mutex_unlock(&game->mutex);                                //esco da SC
     signalToServer(player2Connected);
     closeGameSuccessfull();
 }

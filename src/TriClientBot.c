@@ -20,6 +20,7 @@
 #include <time.h>
 #include "TrisStruct.h"
 #include "errorExit.h"
+#include "SignalMask.h"
 
 //dichiaraioni delle funzioni
 void signalManage();
@@ -46,6 +47,13 @@ int main(){
     //inizializzazione del generatore di numeri casuali
     srand(time(NULL));
 
+    //settaggio della maschera dei segnali
+    sigset_t mask = signalMask();
+    if(sigprocmask(SIG_SETMASK, &mask, NULL) == -1){
+        errorExit("\nErrore nella settaggio della maschera dei segnali.\n");
+        exit(EXIT_FAILURE);
+    }
+
     //gestione dei segnali
     signalManage();
 
@@ -69,13 +77,13 @@ void signalManage(){
         exit(EXIT_FAILURE);
     }
                                                                         //gestione del segnale SIGINT e SIGHUP
-    if(signal(SIGINT, sigIntManage) == SIG_ERR || signal(SIGHUP, sigIntManage) == SIG_ERR){
-        errorExit("\nErrore nella gestione del segnale SIGINT.\n");
+    if(signal(SIGINT, sigIntManage) == SIG_ERR || signal(SIGHUP, sigIntManage) == SIG_ERR || signal(SIGTERM, sigIntManage) == SIG_ERR){
+        errorExit("\nErrore nella gestione del segnale SIGINT, SIGHUP o SIGTERM.\n");
         exit(EXIT_FAILURE);
     }
                                                                         //gestione del segnale SIGUSR1 e SIGUSR2
     if(signal(SIGUSR1, sigFromServer) == SIG_ERR || signal(SIGUSR2, sigFromServer) == SIG_ERR){
-        errorExit("\nErrore nella gestione del segnale SIGUSR1.\n");
+        errorExit("\nErrore nella gestione del segnale SIGUSR1 e SIGUSR2.\n");
         exit(EXIT_FAILURE);
     }
 }
@@ -155,16 +163,18 @@ void sigTimeout(){                                                      //se sca
 }
 
 void sigIntManage(int sig){
-    if(player)                                                     //in base a se sono player 2 o player 1
+    pthread_mutex_lock(&game->mutex);                                   //entro in SC
+    if(player)                                                          //in base a se sono player 2 o player 1
         game->pid_p2 = -1;
     else
-        game->pid_p1 = -1;                                         //comunico abbandono a Server
+        game->pid_p1 = -1;                                              //comunico abbandono a Server
+    pthread_mutex_unlock(&game->mutex);                                 //esco da SC
     signalToServer();
     closeGameSuccessfull();
 }
 
 void signalToServer(){
-    if(kill(game->pid_s, SIGUSR1) == -1){                          //comunico al server che ho abbandonato la partita avviata
+    if(kill(game->pid_s, SIGUSR1) == -1){                              //comunico al server che ho abbandonato la partita avviata
         errorExit("\nErrore nella comunicazione con il server.\n");
         closeErrorGame();
     }
