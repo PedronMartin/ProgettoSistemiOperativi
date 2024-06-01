@@ -6,10 +6,9 @@
 *Data di realizzazione: 10/05/2024 -> 01/06/2024
 ***********************************************/
 
-#include "errorExit.h"
-#include <stdio.h>
-#include <errno.h>
+#ifndef SIGNALMASK_H 
+#define SIGNALMASK_H 
 
-void errorExit(const char *msg) {
-    perror(msg);
-}
+sigset_t signalMask();
+
+#endif

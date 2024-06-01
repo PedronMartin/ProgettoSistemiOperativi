@@ -1,3 +1,11 @@
+/***********************************************
+*Matricola VR471276
+*Alessandro Luca Cremasco
+*Matricola VR471448
+*Martin Giuseppe Pedron
+*Data di realizzazione: 10/05/2024 -> 01/06/2024
+***********************************************/
+
 #ifndef TRISSTRUCT_H
     #define righe 3
     #define colonne 3
@@ -10,6 +18,7 @@
         pid_t pid_p1;               //pid giocatore 1
         pid_t pid_p2;               //pid giocatore 2
         pid_t pid_s;                //pid server
+        int bot;                    //flag per il bot
         int winner;                 //vincitore
     };
     

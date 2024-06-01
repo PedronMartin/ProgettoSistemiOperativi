@@ -3,7 +3,7 @@
 *Alessandro Luca Cremasco
 *Matricola VR471448
 *Martin Giuseppe Pedron
-*Data di realizzazione: 10/05/2024 -> 30/05/2024
+*Data di realizzazione: 10/05/2024 -> 01/06/2024
 ***********************************************/
 
 //librerie richieste
@@ -19,6 +19,7 @@
 #include <signal.h>
 #include "TrisStruct.h"
 #include "errorExit.h"
+#include "SignalMask.h"
 
 //dichiaraioni delle funzioni
 void checkParameters(int, char*[]);
@@ -41,6 +42,7 @@ int player;
 int enemy;
 int row, column;
 int player2Connected = 0;
+int bot = 0;
 struct Tris *game;
 
 int main(int argc, char *argv[]){
@@ -50,6 +52,13 @@ int main(int argc, char *argv[]){
 
     //salvo il nome del giocatore
     playername = argv[1];
+
+    //settaggio della maschera dei segnali
+    sigset_t mask = signalMask();
+    if(sigprocmask(SIG_SETMASK, &mask, NULL) == -1){
+        errorExit("\nErrore nella settaggio della maschera dei segnali.\n");
+        exit(EXIT_FAILURE);
+    }
 
     //gestione dei segnali
     signalManage();
@@ -69,13 +78,17 @@ int main(int argc, char *argv[]){
 
 void checkParameters(int argc, char *argv[]){
     if(argc != 2 && argc != 3){
-        printf("\nFactor esecuzione errato.\nFormato richiesto: ./eseguibile <nome_utente> oppure ./eseguibile <nome_utente> *\n\n");
+        printf("\nFactor esecuzione errato.\nFormato richiesto: ./eseguibile <nome_utente>");
+        printf("\nOppure ./eseguibile <nome_utente> '*' per giocare contro un bot.\n\n");
         exit(EXIT_FAILURE);
     }
     if(argc == 3 && *argv[2] != '*'){
-        printf("\nFormato richiesto: ./eseguibile <nome_utente> oppure ./eseguibile <nome_utente> *\n\n");
+        printf("\nFactor esecuzione errato.\nFormato richiesto: ./eseguibile <nome_utente>");
+        printf("\nOppure ./eseguibile <nome_utente> '*' per giocare contro un bot.\n\n");
         exit(EXIT_FAILURE);
     }
+    if(argc == 3 && *argv[2] == '*')
+        bot = 1;
 }
 
 void signalManage(){
@@ -84,13 +97,13 @@ void signalManage(){
         exit(EXIT_FAILURE);
     }
                                                                         //gestione del segnale SIGINT e SIGHUP
-    if(signal(SIGINT, sigIntManage) == SIG_ERR || signal(SIGHUP, sigIntManage) == SIG_ERR){
-        errorExit("\nErrore nella gestione del segnale SIGINT.\n");
+    if(signal(SIGINT, sigIntManage) == SIG_ERR || signal(SIGHUP, sigIntManage) == SIG_ERR || signal(SIGTERM, sigIntManage) == SIG_ERR){
+        errorExit("\nErrore nella gestione del segnale SIGINT, SIGHUP o SIGTERM.\n");
         exit(EXIT_FAILURE);
     }
                                                                         //gestione del segnale SIGUSR1 e SIGUSR2
     if(signal(SIGUSR1, sigFromServer) == SIG_ERR || signal(SIGUSR2, sigFromServer) == SIG_ERR){
-        errorExit("\nErrore nella gestione del segnale SIGUSR1.\n");
+        errorExit("\nErrore nella gestione del segnale SIGUSR1 e SIGUSR2.\n");
         exit(EXIT_FAILURE);
     }
 }
@@ -124,11 +137,12 @@ void waitPlayers(){
         game->pid_p1 = getpid();                                        //significa che sono io il primo giocatore
         player = 0;                                                     //imposto il player locale
         enemy = 1;                                                      //imposto il player avversario
+        game->bot = bot;                                                //imposto se è stato chiesto di giocare con un bot
         pthread_mutex_unlock(&game->mutex);                             //esco dalla SC
         struct sembuf sops = {0, 1, 0};                                 //inizializzo la struttura per l'operazione (+1)
         if(semop(semid, &sops, 1) == -1){                               //comunichiamo al server che siamo entrati come P1
             errorExit("\nErrore nella comunicazione della connessione.\n");
-            closeErrorGame();
+            exit(EXIT_FAILURE);                                         //non siamo ancora entrati quindi uscita classica
         }
         printf("\nPlayer %s connesso.\n", playername);                  //comunico al player che è connesso in output
         printf("\nIn attesa del secondo giocatore...\n");               //comunico al player che è in attesa di P2
@@ -178,7 +192,7 @@ void play(){
             printf("\nInserisci riga e colonna dove inserire il simbolo: ");
             fgets(input, sizeof(input), stdin);                         //leggo da tastiera
             if(sscanf(input, "%d %d", &row, &column) != 2){             //controllo inserimento di due interi in buffer
-                printf("\nValori inseriti devono essere numeri sensati.\n");  
+                printf("\nInserisci due numeri separati da uno spazio.\n");  
                                                                         //2 sono gli elementi che devono essere letti da sscanf con successo
                 flag = 0;                                               //se i valori non sono numerici ripeto il ciclo
                 continue;
@@ -197,8 +211,8 @@ void play(){
 
         pthread_mutex_lock(&game->mutex);                               //entro in SC
         game->board[row][column] = player;                              //inserisco il simbolo nella matrice
-        printBoard(game);                                               //stampa la matrice di gioco post mossa
         pthread_mutex_unlock(&game->mutex);                             //esco da SC
+        printBoard(game);                                               //stampa la matrice di gioco post mossa
         if(semop(semid, &sops2, 1) == -1){                              //comunico al server che ho finito il turno
             errorExit("\nErrore nella comunicazione di fine turno\n");  //gestione errore
             closeErrorGame();
@@ -213,6 +227,8 @@ void play(){
 }
 
 void victory(){
+    printf("\nTAVOLA FINALE:\n");
+    printBoard(game);                                                   //stampa la matrice di gioco
     if(game->winner == player){                                         //se hai vinto
         if(player){                                                     //e sei player 2
             if(game->pid_p1 == -1)                                      //P1 ha abbandonato
@@ -247,6 +263,7 @@ void sigTimeout(){                                                     //se scad
 }
 
 void sigIntManage(int sig){
+    pthread_mutex_lock(&game->mutex);                                  //entro in SC
     if(player2Connected){
         printf("\nAbbandono partita in corso...\n");
         if(player)                                                     //in base a se sono player 2 o player 1
@@ -259,6 +276,7 @@ void sigIntManage(int sig){
         game->pid_p1 = -1;                                             //comunico abbandono a Server
     }
 
+    pthread_mutex_unlock(&game->mutex);                                //esco da SC
     signalToServer(player2Connected);
     closeGameSuccessfull();
 }
