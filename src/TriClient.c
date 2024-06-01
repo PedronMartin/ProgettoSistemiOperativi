@@ -256,11 +256,9 @@ void victory(){
 }
 
 void sigTimeout(){                                                     //se scade il tempo a uno dei due giocatori, la partita finisce
-    pthread_mutex_lock(&game->mutex);                                  //entro in SC
     if(game->winner != player)
         printf("\nTempo scaduto. Ricorda che hai un time di %d per giocare la tua mossa.\n", game->timeout);
     victory();                                                         //comunico il vincitore
-    pthread_mutex_unlock(&game->mutex);                                //esco da SC
     closeGameSuccessfull();
 }
 

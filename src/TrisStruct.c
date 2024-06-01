@@ -4,7 +4,6 @@
 #include "TrisStruct.h"
 
 void printBoard(struct Tris* game){              //funzione per la stampa della matrice di gioco
-    pthread_mutex_lock(&game->mutex);            //acquisisce il mutex per la stampa della matrice
     for(int i = 0; i < righe; i++){
         for(int j = 0; j < colonne; j++){
             if(game->board[i][j] == -1){
@@ -27,5 +26,4 @@ void printBoard(struct Tris* game){              //funzione per la stampa della 
             printf("\n");
         }
     }
-    pthread_mutex_unlock(&game->mutex);         //rilascia il mutex
 }

@@ -91,6 +91,7 @@ int main(int argc, char *argv[]){
     memoryClosing();
 
     //chiusura programma
+    printf("\nChiusura partita in corso...\n");
     return 0;
 }
 
@@ -133,7 +134,7 @@ void signalManage(){
     }
     //gestione del segnale Ctrl ^C prima che i giocatori siano connessi e gestione della caduta del terminale
     if(signal(SIGINT, sigIntManage) == SIG_ERR || signal(SIGHUP, sigIntManage) == SIG_ERR || signal(SIGTERM, sigIntManage) == SIG_ERR){
-        errorExit("\nErrore nella gestione del segnale SIGINT, SIGTERM oSIGHUP.\n");
+        errorExit("\nErrore nella gestione del segnale SIGINT, SIGTERM o SIGHUP.\n");
         memoryClosing();
         exit(EXIT_FAILURE);
     }
@@ -298,6 +299,7 @@ void Tris(){
                 exit(EXIT_FAILURE);
             }
         }
+        sleep(1);                                                      //attendo 1 secondo per evitare problemi di sincronizzazione
         alarm(game->timeout);                                          //imposto il timeout
         while(semop(semid, &sops_minus, 1) == -1){                     //attendo che player abbia finito di giocare
             if(errno != EINTR){                                        //errore esterno (es. chiusura ipcs)
@@ -354,7 +356,7 @@ bool checkVictory(){
 
     pthread_mutex_unlock(&game->mutex);                                //esco da SC
     if(game->winner != -1){                                            //se c'è un vincitore
-        printf("\nIl vincitore è il player con il simbolo %c.\n", game->simbolo[game->winner]);
+        printf("\nIl vincitore è il player con il simbolo %c\n", game->simbolo[game->winner]);
         return true;
     }
     return false;
@@ -381,19 +383,19 @@ void sigTimeout(int sig){
         errorExit("\nErrore nell'invio del segnale ai player.\n");
 
     if(game->currentPlayer == 0){                                      //se il player corrente è il player 1
-        printf("\nTimeout scaduto per il Player 1.\n");
+        printf("\nTimeout scaduto per il Player 1. Vince player 2.\n");
         game->winner = 1;                                              //il player 2 vince
         game->pid_p1 = -2;                                             //comunico sconfitta per timeout
     }
     else{                                                              //se il player corrente è il player 2
-        printf("\nTimeout scaduto per il Player 2.\n");
+        printf("\nTimeout scaduto per il Player 2.Vince player 1.\n");
         game->winner = 0;                                              //il player 1 vince
         game->pid_p2 = -2;                                             //comunico sconfitta per timeout
     }
     pthread_mutex_unlock(&game->mutex);                                //esco da SC
     memoryClosing();
-    printf("\nChiusura partita in corso.\n");
-    exit(0);
+    printf("\nChiusura partita in corso...\n");
+    exit(EXIT_SUCCESS);
 }
 
 void checkYield(){
@@ -405,7 +407,7 @@ void checkYield(){
             printf("\nErrore nella comunicazione con il player 2.\n");
     }
     else{
-        printf("\nIl player 2 ha abbandonato. Vince player 2.\n");
+        printf("\nIl player 2 ha abbandonato. Vince player 1.\n");
         game->winner = 0;                                             //il player 1 vince
         if(kill(game->pid_p1, SIGUSR2) == -1)                         //comunico vittoria per abbandono
             printf("\nErrore nella comunicazione con il player 1.\n");
@@ -423,11 +425,11 @@ void sigIntManage(int sig){
             return;
         }
         else                                                          //segnale ricevuto per la seconda volta
-            printf("\nChiusura del server forzata.\n");
+            printf("\nChiusura del server forzata dopo avvertimento.\n");
     }
     else if(sig == SIGHUP)                                            //terminale caduto
         printf("\nChiusura del server anomala per causa esterna. Terminale caduto.\n");
-    else
+    else if(sig == SIGTERM)                                           //segnale di terminazione pulita
         printf("\nChiusura del server forzata.\n");
     if(playerConnected == 1)                                          //se il player 1 è connesso
         if(kill(game->pid_p1, SIGUSR1) == -1)                         //comunico l'uscita al player 1
@@ -453,7 +455,7 @@ void sigIntManage2(int sig){
 
     game->pid_s = -1;                                                 //salva abbandono
                                                                       //avviso i player che la partita termina in modo anomalo
-    if(kill(game->pid_p1, SIGUSR1) == -1 || kill(game->pid_p2, SIGUSR1))
+    if(kill(game->pid_p1, SIGUSR1) == -1 || kill(game->pid_p2, SIGUSR1) == -1)
         errorExit("\nErrore nella comunicazione di chiusura anomala ai player.\n");
     memoryClosing();
     exit(0);
