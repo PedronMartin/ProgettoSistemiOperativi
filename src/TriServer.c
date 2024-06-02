@@ -152,7 +152,7 @@ void signalManage(){
 
 bool memoryCreation(){
     bool result = false;
-    key_t key = ftok("../src/TriServer.c", 111);                              //creo la chiave unica per IPC
+    key_t key = ftok("../src/TriServer.c", 111);                       //creo la chiave unica per IPC
     if(key == -1) {                                                    //gestione errore
         errorExit("\nErrore nella creazione della chiave.\n");
         exit(EXIT_FAILURE);
@@ -207,6 +207,8 @@ void boardCreation(char *argv[]){
         for(int j = 0; j < colonne; j++)
             game->board[i][j] = -1;
     pthread_mutex_unlock(&game->mutex);                                //esco da SC
+    printf("\nPeso in memoria del puntatore alla struttura: %zu\n", sizeof(game));
+    printf("Peso in memoria della struttura: %zu\n", sizeof(*game));
 }
 
 void waitPlayers(){
