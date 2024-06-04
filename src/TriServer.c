@@ -207,8 +207,8 @@ void boardCreation(char *argv[]){
         for(int j = 0; j < colonne; j++)
             game->board[i][j] = -1;
     pthread_mutex_unlock(&game->mutex);                                //esco da SC
-    printf("\nPeso in memoria del puntatore alla struttura: %zu\n", sizeof(game));
-    printf("Peso in memoria della struttura: %zu\n", sizeof(*game));
+    //printf("\nPeso in memoria del puntatore alla struttura: %zu\n", sizeof(game));
+    //printf("Peso in memoria della struttura: %zu\n", sizeof(*game));
 }
 
 void waitPlayers(){
