@@ -177,37 +177,41 @@ void play(){
     if(player)
         printf("\nTurno del player avversario\n");                      //comunico il turno del player
     else
-        printf("\nOra è il tuo turno\n\n");
+        printf("\nOra è il tuo turno\n");
     if(semop(semid, &sops1, 1) == -1){                                  //attendo che il server mi dia il via (no while perchè chiude in tutti i segnali che può ricevere)
         errorExit("\nErrore nell'attesa del turno.\n");                 //gestione errore
+        signalToServer(player2Connected);
         closeErrorGame();
     }
-    char input[10];
+    int c;
     while(game->winner == -1){
+        printf("\n");
         printBoard(game);                                               //stampa la matrice di gioco
         int flag = 1;
         printf("\nOra è il tuo turno. Hai %d secondi per giocare.\n", game->timeout);
-        do{
+        do {
             flag = 1;
             printf("\nInserisci riga e colonna dove inserire il simbolo: ");
-            fgets(input, sizeof(input), stdin);                         //leggo da tastiera
-            if(sscanf(input, "%d %d", &row, &column) != 2){             //controllo inserimento di due interi in buffer
-                printf("\nInserisci due numeri separati da uno spazio.\n");  
-                                                                        //2 sono gli elementi che devono essere letti da sscanf con successo
-                flag = 0;                                               //se i valori non sono numerici ripeto il ciclo
+            int result = scanf("%d %d", &row, &column);                //leggo da tastiera
+            while ((c = getchar()) != '\n' && c != EOF) {              //svuoto il buffer da eventuali eccessi
+                flag = 0;
+            }
+            if(result != 2 || !flag) {                                 //controllo numero inserimenti
+                printf("\nInserisci due numeri separati da uno spazio.\n");
+                flag = 0;
                 continue;
             }
-            else if(row < 0 || row > righe - 1 || column < 0 || column > colonne - 1){             
+            else if(row < 0 || row > righe - 1 || column < 0 || column > colonne - 1) {             
                 printf("\nValori inseriti non validi.\n");
-                flag = 0;                                               //se i valori non sono validi ripeto il ciclo
+                flag = 0;                                              //controllo che i valori stiano nella matrice
                 continue;
             }
-            else if(game->board[row][column] != -1){                    //se la casella è già occupata ripeto il ciclo
+            else if(game->board[row][column] != -1) {                  //controllo che la casella sia libera
                 printf("\nCasella già occupata.\n");
                 flag = 0;
                 continue;
             }
-        }while(!flag);
+        } while(!flag);
 
         pthread_mutex_lock(&game->mutex);                               //entro in SC
         game->board[row][column] = player;                              //inserisco il simbolo nella matrice
@@ -215,11 +219,13 @@ void play(){
         printBoard(game);                                               //stampa la matrice di gioco post mossa
         if(semop(semid, &sops2, 1) == -1){                              //comunico al server che ho finito il turno
             errorExit("\nErrore nella comunicazione di fine turno\n");  //gestione errore
+            signalToServer(player2Connected);
             closeErrorGame();
         }
         printf("\n\nTurno del player avversario\n");                    //comunico il turno del player
         if(semop(semid, &sops1, 1) == -1){                              //attendo che il server mi dia il via (no while)
             errorExit("\nErrore nell'attesa del turno.\n");             //gestione errore
+            signalToServer(player2Connected);
             closeErrorGame();
         }
     }
